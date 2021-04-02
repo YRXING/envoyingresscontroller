@@ -2,6 +2,9 @@ package envoyingresscontroller
 
 import (
 	"fmt"
+	"time"
+	"reflect"
+
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -19,7 +22,6 @@ import (
 	"k8s.io/component-base/metrics/prometheus/ratelimiter"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/kubernetes/pkg/controller"
-	"time"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	ingressv1 "k8s.io/api/networking/v1"
 	v1 "k8s.io/api/core/v1"
@@ -62,7 +64,7 @@ type EnvoyIngressController struct{
 	envoyIngressControllerConfiguration EnvoyIngressControllerConfiguration
 
 	eventRecorder record.EventRecorder
-	
+
 	// To allow injection for testing.
 	syncHandler func(key string) error
 
@@ -91,10 +93,7 @@ type EnvoyIngressController struct{
 	queue workqueue.RateLimitingInterface
 
 	// cluster keys that need to be synced.
-	clusterQueue workqueue.RateLimitingInterface
-
-	// listener keys that need to be synced.
-	listenerQueue workqueue.RateLimitingInterface
+	envoyServiceQueue workqueue.RateLimitingInterface
 }
 
 // Send sends message to destination module which was defined in KubeedgeClient's destination field
@@ -127,8 +126,7 @@ func NewEnvoyIngressController(
 		eventRecorder: eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "envoyingress-controller"}),
 		envoyIngressControllerConfiguration: envoyIngressControllerConfiguration,
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress"),
-		clusterQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress-cluster"),
-		listenerQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress-listener"),
+		envoyServiceQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress-cluster"),
 	}
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: eic.addIngress,
@@ -269,11 +267,82 @@ func (eic *EnvoyIngressController) deleteIngress(obj interface){
 	eic.queue.Add(ingress)
 }
 
-func (eic *EnvoyIngressController) addPod(obj interface{}){}
+// addPod first checks whether the pod is being deleted or has been deleted.
+// If it is being deleted or has been deleted, call deletePod and return.
+// Check the pod label and find if any ingress want theses pod.
+func (eic *EnvoyIngressController) addPod(obj interface{}){
+	pod := obj.(*v1.Pod)
 
-func (eic *EnvoyIngressController) updatePod(cur, old interface){}
+	if pod.DeletionTimestamp != nil {
+		eic.deletePod(pod)
+		return
+	}
 
-func (eic *EnvoyIngressController) deletePod(obj interface){}
+	ingresses := eic.getIngressesForPod(pod)
+	if len(ingresses) == 0{
+		return
+	}
+	for _, ingress := range ingresses{
+		eic.enqueue(ingress)
+	}
+}
+
+// When a pod is updated, figure out what ingresses potentially match it.
+func (eic *EnvoyIngressController) updatePod(cur, old interface){
+	curPod := cur.(*v1.Pod)
+	oldPod := old.(*v1.Pod)
+	if curPod.ResourceVersion == oldPod.ResourceVersion{
+		return
+	}
+
+	if curPod.DeletionTimestamp != nil {
+		eic.deletePod(curPod)
+		return
+	}
+
+	labelChanged := !reflect.DeepEqual(curPod.Labels, oldPod.Labels)
+	if labelChanged {
+		ingresses := eic.getIngressesForPod(oldPod)
+		if len(ingresses) != 0{
+			for _, ingress := range ingresses{
+				eic.enqueue(ingress)
+			}
+		}
+
+		ingresses = eic.getIngressesForPod(curPod)
+		if len(ingresses) == 0{
+			return
+		}
+		for _, ingress := range ingresses{
+			eic.enqueue(ingress)
+		}
+	}
+}
+
+// When a pod is deleted, figure out what ingresses potentially match it.
+func (eic *EnvoyIngressController) deletePod(obj interface){
+	pod, ok := obj.(*v1.Pod)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
+			return
+		}
+		pod, ok = tombstone.Obj.(*v1.Pod)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a pod %#v", obj))
+			return
+		}
+	}
+	klog.V(4).Infof("Pod %s deleted.", pod.Name)
+	ingresses := eic.getIngressesForPod(pod)
+	if len(ingresses) == 0{
+		return
+	}
+	for _, ingress := range ingresses{
+		eic.enqueue(ingress)
+	}
+}
 
 func (eic *EnvoyIngressController) addNode(obj interface{}){}
 
@@ -292,34 +361,28 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {}
 
 func (eic *EnvoyIngressController) runIngressWorkers(){}
 
-func (eic *EnvoyIngressController) runClusterWorkers(){}
-
-func (eic *EnvoyIngressController) runListenerWorkers(){}
+func (eic *EnvoyIngressController) runEnvoyServiceWorkers(){}
 
 // processNextIngressWorkItem deals with one key off the queue.  It returns false when it's time to quit.
 func (eic *EnvoyIngressController) processNextIngressWorkItem() bool {}
 
 // processNextClusterWorkItem deals with one key off the queue.  It returns false when it's time to quit.
-func (eic *EnvoyIngressController) processNextClusterWorkItem() bool {}
-
-// processNextListenerWorkItem deals with one key off the queue.  It returns false when it's time to quit.
-func (eic *EnvoyIngressController) processNextListenerWorkItem() bool {}
+func (eic *EnvoyIngressController) processNextEnvoyServiceWorkItem() bool {}
 
 func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {}
 
 func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {}
 
-func (eic *EnvoyIngressController) clusterEnqueue() {}
+func (eic *EnvoyIngressController) enqueueEnovyService(envoySerivce *v1alpha1.EnvoyService) {}
 
-func (eic *EnvoyIngressController) enqueueClusterAfter(obj interface{}, after time.Duration) {}
-
-func (eic *EnvoyIngressController) listenerEnqueue() {}
-
-func (eic *EnvoyIngressController) enqueueListenerAfter(obj interface{}, after time.Duration) {}
+func (eic *EnvoyIngressController) enqueueEnvoyServiceAfter(obj interface{}, after time.Duration) {}
 
 func (eic *EnvoyIngressController) storeIngressStatus(){}
 
 func (eic *EnvoyIngressController) updateIngressStatus(){}
+
+// getIngressesForPod returns a list of ingress that potentially match the ingress
+func (eic *EnvoyIngressController) getIngressesForPod(pod *v1.Pod) []*ingressv1.Ingress {}
 
 // getServicesForIngress returns a list of services that potentially match the ingress.
 func (eic *EnvoyIngressController) getServicesForIngress(ingress ingressv1.Ingress) ([]*v1.Service, error) {}
@@ -329,8 +392,11 @@ func (eic *EnvoyIngressController) getPodsForService(service v1.Service) ([]*v1.
 
 func (eic *EnvoyIngressController) getIngress(key string) error {}
 
+// TODO: sending envoy objects to edge will make it different to manage the objects. Need consider construct a object which k8s style
 func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Cluster, error) {}
 
 func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Listener, error) {}
+
+func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
 
 func (eic*EnvoyIngressController) syncEnvoyIngress(key string) error {}
