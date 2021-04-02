@@ -2,8 +2,12 @@ package envoyingresscontroller
 
 import (
 	"fmt"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/labels"
+	"strings"
 	"time"
 	"reflect"
+	"sync"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
@@ -36,6 +40,9 @@ import (
 
 const(
 	ENVOYINGRESSCONTROLLERNAME = "envoyingress"
+	// envoy ingress should have this annotation which indicates the node group to send to
+	ENVOYINGRESSNODEGROUPANNOTATION = "v1alpha1.kubeedge.io/nodegroup"
+	NODEGROUPLABEL = "nodegroup"
 )
 
 //KubeedgeClient is used for sending message to and from cloudhub.
@@ -67,6 +74,17 @@ type EnvoyIngressController struct{
 
 	// To allow injection for testing.
 	syncHandler func(key string) error
+
+	// node2group saves the 1 to n relationship of a node's groups
+	// So a node can join not only one node group
+	// Because the label in k8s is map[string]string, the nodegroup label can only contain one string.
+	// In case a node belongs to more than one group, the groups should be seperated by ; signal.
+	// For example, node A belongs to nodegroup x and y, and its nodegroup label can be in the format: nodegroup: a;b
+	node2group map[string][]string
+	//group2node save2 the 1 to n relationship of a group's node members
+	group2node map[string][]string
+	// The lock is used for protecting write operations to node2group and group2node
+	lock sync.RWMutex
 
 	// podLister get list/get pods from the shared informers's store
 	podLister corelisters.PodLister
@@ -216,7 +234,7 @@ func (eic *EnvoyIngressController) addIngress(obj interface{}){
 
 // updateIngress compares the uid of given ingresses and if they differences
 // delete the old ingress and enqueue the new one
-func (eic *EnvoyIngressController) updateIngress(cur, old interface){
+func (eic *EnvoyIngressController) updateIngress(cur, old interface{}){
 	oldIngress := old.(*ingressv1.Ingress)
 	curIngress := cur.(*ingressv1.Ingress)
 
@@ -242,7 +260,7 @@ func (eic *EnvoyIngressController) updateIngress(cur, old interface){
 }
 
 // deleteIngress deletes the given ingress from queue.
-func (eic *EnvoyIngressController) deleteIngress(obj interface){
+func (eic *EnvoyIngressController) deleteIngress(obj interface{}){
 	ingress, ok := obj.(*ingressv1.Ingress)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -250,7 +268,7 @@ func (eic *EnvoyIngressController) deleteIngress(obj interface){
 			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
 			return
 		}
-		ingress, ok := tombstone.Obj.(*ingressv1.Ingress)
+		ingress, ok = tombstone.Obj.(*ingressv1.Ingress)
 		if !ok {
 			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not an ingress %#v", obj))
 			return
@@ -258,9 +276,9 @@ func (eic *EnvoyIngressController) deleteIngress(obj interface){
 	}
 	klog.V(4).Infof("Deleting ingress %s", ingress.Name)
 
-	key, err := controller.KeyFunc(Ingress)
+	key, err := controller.KeyFunc(ingress)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", ds, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", ingress, err))
 		return
 	}
 
@@ -288,7 +306,7 @@ func (eic *EnvoyIngressController) addPod(obj interface{}){
 }
 
 // When a pod is updated, figure out what ingresses potentially match it.
-func (eic *EnvoyIngressController) updatePod(cur, old interface){
+func (eic *EnvoyIngressController) updatePod(cur, old interface{}){
 	curPod := cur.(*v1.Pod)
 	oldPod := old.(*v1.Pod)
 	if curPod.ResourceVersion == oldPod.ResourceVersion{
@@ -344,17 +362,127 @@ func (eic *EnvoyIngressController) deletePod(obj interface){
 	}
 }
 
-func (eic *EnvoyIngressController) addNode(obj interface{}){}
+// addNode updates the node2group and group2node map.
+func (eic *EnvoyIngressController) addNode(obj interface{}){
+	node := obj.(*v1.Node)
+	if node.Labels != nil {
+		if len(node.Labels[NODEGROUPLABEL]) != 0{
+			eic.lock.Lock()
+			defer eic.lock.Unlock()
+			nodegroup := strings.Split(node.Labels[NODEGROUPLABEL], ";")
+			if eic.node2group[node.Name] == nil{
+				eic.node2group[node.Name] = make([]string, 0, 10)
+			}
+			for _, v := range nodegroup{
+				if len(v) != 0{
+					eic.node2group[node.Name]=append(eic.node2group[node.Name], v)
+					if eic.group2node[v] == nil{
+						eic.group2node[v] = make([]string, 0, 10)
+					}
+					eic.group2node[v]=append(eic.group2node[v], node.Name)
+				}
+			}
+		}
+	}
+}
 
-func (eic *EnvoyIngressController) updateNode(cur, old interface){}
+// Copied from daemonset controller
+// nodeInSameCondition returns true if all effective types ("Status" is true) equals;
+// otherwise, returns false.
+func nodeInSameCondition(old []v1.NodeCondition, cur []v1.NodeCondition) bool {
+	if len(old) == 0 && len(cur) == 0 {
+		return true
+	}
 
-func (eic *EnvoyIngressController) deleteNode(obj interface){}
+	c1map := map[v1.NodeConditionType]v1.ConditionStatus{}
+	for _, c := range old {
+		if c.Status == v1.ConditionTrue {
+			c1map[c.Type] = c.Status
+		}
+	}
+
+	for _, c := range cur {
+		if c.Status != v1.ConditionTrue {
+			continue
+		}
+
+		if _, found := c1map[c.Type]; !found {
+			return false
+		}
+
+		delete(c1map, c.Type)
+	}
+
+	return len(c1map) == 0
+}
+
+// Copied from daemonset controller
+func shouldIgnoreNodeUpdate(oldNode, curNode v1.Node) bool {
+	if !nodeInSameCondition(oldNode.Status.Conditions, curNode.Status.Conditions) {
+		return false
+	}
+	oldNode.ResourceVersion = curNode.ResourceVersion
+	oldNode.Status.Conditions = curNode.Status.Conditions
+	return apiequality.Semantic.DeepEqual(oldNode, curNode)
+}
+
+// updateNode updates the node2group and group2node map.
+func (eic *EnvoyIngressController) updateNode(cur, old interface{}){
+	oldNode := old.(*v1.Node)
+	curNode := cur.(*v1.Node)
+	if shouldIgnoreNodeUpdate(*oldNode, *curNode){
+		return
+	}
+
+	if curNode.Labels[NODEGROUPLABEL] != oldNode.Labels[NODEGROUPLABEL]{
+		eic.deleteNode(oldNode)
+		eic.addNode(curNode)
+	}
+}
+
+// deleteNode updates the node2group and group2node map.
+func (eic *EnvoyIngressController) deleteNode(obj interface{}){
+	node, ok := obj.(*v1.Node)
+
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
+			return
+		}
+		node, ok = tombstone.Obj.(*v1.Node)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a node %#v", obj))
+			return
+		}
+	}
+
+	if len(node.Labels[NODEGROUPLABEL]) != 0{
+		eic.lock.Lock()
+		defer eic.lock.Unlock()
+		nodegroup := strings.Split(node.Labels[NODEGROUPLABEL], ";")
+		delete(eic.node2group, node.Name)
+		for _, v := range nodegroup{
+			//delete the old relationship between this node and group
+			if len(v) != 0 {
+				nodeList := []string{}
+				for _, nodeName := range eic.group2node[v]{
+					if nodeName == node.Name{
+						continue
+					}
+					nodeList = append(nodeList, nodeName)
+				}
+				eic.group2node[v] = nodeList
+			}
+		}
+	}
+}
 
 func (eic *EnvoyIngressController) addService(obj interface{}){}
 
-func (eic *EnvoyIngressController) updateService(cur, old interface){}
+func (eic *EnvoyIngressController) updateService(cur, old interface{}){}
 
-func (eic *EnvoyIngressController) deleteService(obj interface){}
+func (eic *EnvoyIngressController) deleteService(obj interface{}){}
 
 // Run begins watching and syncing ingresses.
 func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {}
@@ -399,4 +527,8 @@ func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingr
 
 func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
 
-func (eic*EnvoyIngressController) syncEnvoyIngress(key string) error {}
+func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {}
+
+// syncNodeGroupsWithNodes should be called first when the controller begins to run.
+// It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
+func (eic *EnvoyIngressController) syncNodeGroupsWithNodes() error {}
