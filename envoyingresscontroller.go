@@ -282,7 +282,7 @@ func (eic *EnvoyIngressController) deleteIngress(obj interface{}){
 		return
 	}
 
-	eic.queue.Add(ingress)
+	eic.queue.Add(key)
 }
 
 // addPod first checks whether the pod is being deleted or has been deleted.
@@ -338,7 +338,7 @@ func (eic *EnvoyIngressController) updatePod(cur, old interface{}){
 }
 
 // When a pod is deleted, figure out what ingresses potentially match it.
-func (eic *EnvoyIngressController) deletePod(obj interface){
+func (eic *EnvoyIngressController) deletePod(obj interface{}){
 	pod, ok := obj.(*v1.Pod)
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
@@ -478,11 +478,59 @@ func (eic *EnvoyIngressController) deleteNode(obj interface{}){
 	}
 }
 
-func (eic *EnvoyIngressController) addService(obj interface{}){}
+// When a service is added, figure out what ingresses potentially match it.
+func (eic *EnvoyIngressController) addService(obj interface{}){
+	service := obj.(*v1.Service)
 
-func (eic *EnvoyIngressController) updateService(cur, old interface{}){}
+	ingresses := eic.getIngressesForService(service)
+	if len(ingresses) == 0{
+		return
+	}
+	for _, ingress := range ingresses{
+		eic.enqueue(ingress)
+	}
+}
 
-func (eic *EnvoyIngressController) deleteService(obj interface{}){}
+// When a service is updated, figure out what ingresses potentially match it.
+func (eic *EnvoyIngressController) updateService(cur, old interface{}){
+	oldService := old.(*v1.Service)
+	curService := cur.(*v1.Service)
+
+	if curService.UID != oldService.UID {
+		selectorChanged := !reflect.DeepEqual(curService.Spec.Selector, oldService.Spec.Selector)
+		if selectorChanged {
+			klog.V(4).Infof("service %v's selector has changed", oldService.Name)
+			eic.deleteService(oldService)
+			eic.addService(curService)
+		}
+	}
+}
+
+// When a service is deleted, figure out what ingresses potentially match it.
+func (eic *EnvoyIngressController) deleteService(obj interface{}){
+	service, ok := obj.(*v1.Service)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("couldn;t get object from tombstone %#v", obj))
+			return
+		}
+		service, ok = tombstone.Obj.(*v1.Service)
+		if !ok {
+			utilruntime.HandleError(fmt.Errorf("tombstone contained object that is not a service %#v", obj))
+			return
+		}
+	}
+
+	klog.V(4).Infof("Service %s deleted.", service.Name)
+	ingresses := eic.getIngressesForService(service)
+	if len(ingresses) == 0{
+		return
+	}
+	for _, ingress := range ingresses{
+		eic.enqueue(ingress)
+	}
+}
 
 // Run begins watching and syncing ingresses.
 func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {}
@@ -509,8 +557,11 @@ func (eic *EnvoyIngressController) storeIngressStatus(){}
 
 func (eic *EnvoyIngressController) updateIngressStatus(){}
 
-// getIngressesForPod returns a list of ingress that potentially match the ingress
+// getIngressesForPod returns a list of ingresses that potentially match the pod
 func (eic *EnvoyIngressController) getIngressesForPod(pod *v1.Pod) []*ingressv1.Ingress {}
+
+// getIngressesForService returns a list of ingresses that potentially match the service
+func (eic *EnvoyIngressController) getIngressesForService(service *v1.Service) []*ingressv1.Ingress {}
 
 // getServicesForIngress returns a list of services that potentially match the ingress.
 func (eic *EnvoyIngressController) getServicesForIngress(ingress ingressv1.Ingress) ([]*v1.Service, error) {}
