@@ -3,7 +3,9 @@ package envoyingresscontroller
 import (
 	"fmt"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"strings"
 	"time"
 	"reflect"
@@ -29,6 +31,7 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	ingressv1 "k8s.io/api/networking/v1"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/conversion"
 	envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
@@ -57,8 +60,7 @@ type EnvoyIngressControllerConfiguration struct{
 	syncInterval time.Duration
 	//envoy related fields
 	ingressSyncWorkerNumber int
-	clusterSyncWorkerNumber int
-	listenerSyncWorkerNumber int
+	envoyServiceSyncWorkerNumber int
 }
 
 // EnvoyIngressController is responsible for converting envoy ingress to envoy configuration
@@ -179,6 +181,7 @@ func NewEnvoyIngressController(
 	eic.serviceStoreSynced = serviceInformer.Informer().HasSynced
 
 	eic.enable = enable
+	eic.syncHandler = eic.syncEnvoyIngress
 
 	return eic, nil
 }
@@ -195,8 +198,7 @@ func Register(eic *v1alpha1.EnvoyIngressController){
 	envoyIngressControllerConfiguration := EnvoyIngressControllerConfiguration{
 		syncInterval: eic.SyncInterval,
 		ingressSyncWorkerNumber: eic.IngressSyncWorkerNumber,
-		clusterSyncWorkerNumber: eic.ClusterSyncWorkerNumber,
-		listenerSyncWorkerNumber: eic.ListenerSyncWorkerNumber,
+		envoyServiceSyncWorkerNumber: eic.EnvoyServiceSyncWorkerNumber,
 	}
 	// TODO: deal with error
 	envoyIngresscontroller, _ := NewEnvoyIngressController(ingressInformer,podInformer,nodeInformer,serviceInformer,envoyIngressControllerConfiguration,kubeClient,eic.Enable)
@@ -533,32 +535,172 @@ func (eic *EnvoyIngressController) deleteService(obj interface{}){
 }
 
 // Run begins watching and syncing ingresses.
-func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {}
+func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
+	defer utilruntime.HandleCrash()
+	defer eic.queue.ShutDown()
+	defer eic.envoyServiceQueue.ShutDown()
 
-func (eic *EnvoyIngressController) runIngressWorkers(){}
+	klog.Infof("Starting envoy ingress controller")
+	defer klog.Infof("Shutting down envoy ingress controller")
 
-func (eic *EnvoyIngressController) runEnvoyServiceWorkers(){}
+	if !cache.WaitForNamedCacheSync("envoy ingress", stopCh, eic.podStoreSynced, eic.nodeStoreSynced, eic.serviceStoreSynced, eic.ingressStoreSynced){
+		return
+	}
+
+	for i := 0; i < eic.envoyIngressControllerConfiguration.ingressSyncWorkerNumber; i++ {
+		go wait.Until(eic.runIngressWorkers, eic.envoyIngressControllerConfiguration.syncInterval, stopCh)
+	}
+
+	for i:= 0; i < eic.envoyIngressControllerConfiguration.envoyServiceSyncWorkerNumber; i++{
+		go wait.Until(eic.runEnvoyServiceWorkers, eic.envoyIngressControllerConfiguration.syncInterval, stopCh)
+	}
+
+	<-stopCh
+}
+
+func (eic *EnvoyIngressController) runIngressWorkers(){
+	for eic.processNextIngressWorkItem(){
+	}
+}
+
+func (eic *EnvoyIngressController) runEnvoyServiceWorkers(){
+	for eic.processNextEnvoyServiceWorkItem(){
+	}
+}
 
 // processNextIngressWorkItem deals with one key off the queue.  It returns false when it's time to quit.
-func (eic *EnvoyIngressController) processNextIngressWorkItem() bool {}
+func (eic *EnvoyIngressController) processNextIngressWorkItem() bool {
+	ingressKey, quit := eic.queue.Get()
+	if quit {
+		return false
+	}
+	defer eic.queue.Done(ingressKey)
+
+	err := eic.syncHandler(ingressKey.(string))
+	if err == nil {
+		eic.queue.Forget(ingressKey)
+		return true
+	}
+
+	utilruntime.HandleError(fmt.Errorf("%v failed with: %v", ingressKey, err))
+	eic.queue.AddRateLimited(ingressKey)
+
+	return true
+}
 
 // processNextClusterWorkItem deals with one key off the queue.  It returns false when it's time to quit.
-func (eic *EnvoyIngressController) processNextEnvoyServiceWorkItem() bool {}
+func (eic *EnvoyIngressController) processNextEnvoyServiceWorkItem() bool {
+	envoyServiceKey, quit := eic.envoyServiceQueue.Get()
+	if quit {
+		return false
+	}
+	defer eic.envoyServiceQueue.Done(envoyServiceKey)
 
-func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {}
+	err := eic.syncEnvoyService(envoyServiceKey.(string))
+	if err == nil {
+		eic.envoyServiceQueue.Forget(envoyServiceKey)
+		return true
+	}
 
-func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {}
+	utilruntime.HandleError(fmt.Errorf("%v failed with: %v", envoyServiceKey, err))
+	eic.envoyServiceQueue.AddRateLimited(envoyServiceKey)
 
-func (eic *EnvoyIngressController) enqueueEnovyService(envoySerivce *v1alpha1.EnvoyService) {}
+	return true
+}
 
-func (eic *EnvoyIngressController) enqueueEnvoyServiceAfter(obj interface{}, after time.Duration) {}
+func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
+	key, err := controller.KeyFunc(ingress)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %#v: %v", ingress, err))
+		return
+	}
+
+	eic.queue.Add(key)
+}
+
+func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {
+	key, err := controller.KeyFunc(obj)
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
+		return
+	}
+
+	eic.queue.AddAfter(key, after)
+}
+
+func (eic *EnvoyIngressController) enqueueEnovyService(envoySerivce *v1alpha1.EnvoyService) {
+	key, err := controller.KeyFunc(envoySerivce)
+	if err != nil{
+		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %#v: %v", envoySerivce, err))
+		return
+	}
+
+	eic.envoyServiceQueue.Add(key)
+}
+
+func (eic *EnvoyIngressController) enqueueEnvoyServiceAfter(obj interface{}, after time.Duration) {
+	key, err := controller.KeyFunc(obj)
+	if err != nil{
+		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
+		return
+	}
+
+	eic.envoyServiceQueue.AddAfter(key, after)
+}
 
 func (eic *EnvoyIngressController) storeIngressStatus(){}
 
 func (eic *EnvoyIngressController) updateIngressStatus(){}
 
 // getIngressesForPod returns a list of ingresses that potentially match the pod
-func (eic *EnvoyIngressController) getIngressesForPod(pod *v1.Pod) []*ingressv1.Ingress {}
+func (eic *EnvoyIngressController) getIngressesForPod(pod *v1.Pod) []*ingressv1.Ingress {
+
+}
+
+// getServicesForPod returns a list of services that potentially match the pod
+func (eic *EnvoyIngressController) getServicesForPod(pod *v1.Pod) []*v1.Service {
+	var selector labels.Selector
+
+	if len(pod.Labels) == 0{
+		// If the pod has no label, it can't be bound to a service
+		return nil
+	}
+
+	list, err := eic.serviceLister.Services(pod.Namespace).List(labels.Everything())
+	if err != nil {
+
+	}
+
+	var services []*v1.Service
+	for _, service := range list{
+		var labelSelector *metav1.LabelSelector
+		if service.Namespace != pod.Namespace{
+			continue
+		}
+		err = metav1.Convert_Map_string_To_string_To_v1_LabelSelector(&service.Spec.Selector, labelSelector, nil)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("Failed to convert service %v's selector into label selector", service.Name))
+			return nil
+		}
+		selector, err = metav1.LabelSelectorAsSelector(labelSelector)
+		if err != nil {
+			// this should not happen if the DaemonSet passed validation
+			return nil
+		}
+
+		//If a service with a nil or empty selector creeps in, it should match nothing, not everything
+		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		services = append(services, service)
+	}
+
+	if len(services) == 0 {
+		return nil
+	}
+
+	return services
+}
 
 // getIngressesForService returns a list of ingresses that potentially match the service
 func (eic *EnvoyIngressController) getIngressesForService(service *v1.Service) []*ingressv1.Ingress {}
@@ -579,6 +721,8 @@ func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingr
 func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
 
 func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {}
+
+func (eic *EnvoyIngressController) syncEnvoyService(key string) error {}
 
 // syncNodeGroupsWithNodes should be called first when the controller begins to run.
 // It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
