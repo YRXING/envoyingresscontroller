@@ -609,6 +609,10 @@ func (eic *EnvoyIngressController) processNextEnvoyServiceWorkItem() bool {
 }
 
 func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
+	// ingore ingresses which mismatch the controller type
+	if *ingress.Spec.IngressClassName != ENVOYINGRESSCONTROLLERNAME {
+		return
+	}
 	key, err := controller.KeyFunc(ingress)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %#v: %v", ingress, err))
@@ -619,6 +623,14 @@ func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
 }
 
 func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {
+	ingress, ok := obj.(*ingressv1.Ingress)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("Cloudn't convert obj into ingress, obj:%#v, err: %v", obj, err))
+	}
+	if *ingress.Spec.IngressClassName != ENVOYINGRESSCONTROLLERNAME {
+		return
+	}
+
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
@@ -654,13 +666,35 @@ func (eic *EnvoyIngressController) updateIngressStatus(){}
 
 // getIngressesForPod returns a list of ingresses that potentially match the pod
 func (eic *EnvoyIngressController) getIngressesForPod(pod *v1.Pod) []*ingressv1.Ingress {
-
+	if pod == nil {
+		return nil
+	}
+	services := eic.getServicesForPod(pod)
+	if len(services) == 0 {
+		return nil
+	}
+	var ingresses []*ingressv1.Ingress
+	var tmpIngresses []*ingressv1.Ingress
+	for _, service := range services{
+		tmpIngresses = eic.getIngressesForService(service)
+		if len(tmpIngresses) == 0 {
+			continue
+		}
+		ingresses = append(ingresses, tmpIngresses)
+	}
+	if len(ingresses) == 0{
+		return nil
+	}
+	return ingresses
 }
 
 // getServicesForPod returns a list of services that potentially match the pod
 func (eic *EnvoyIngressController) getServicesForPod(pod *v1.Pod) []*v1.Service {
 	var selector labels.Selector
 
+	if pod == nil{
+		return nil
+	}
 	if len(pod.Labels) == 0{
 		// If the pod has no label, it can't be bound to a service
 		return nil
@@ -668,7 +702,8 @@ func (eic *EnvoyIngressController) getServicesForPod(pod *v1.Pod) []*v1.Service 
 
 	list, err := eic.serviceLister.Services(pod.Namespace).List(labels.Everything())
 	if err != nil {
-
+		utilruntime.HandleError(fmt.Errorf("Failed to list all the services in cluster for pod: %v", pod.Name))
+		return nil
 	}
 
 	var services []*v1.Service
@@ -703,13 +738,149 @@ func (eic *EnvoyIngressController) getServicesForPod(pod *v1.Pod) []*v1.Service 
 }
 
 // getIngressesForService returns a list of ingresses that potentially match the service
-func (eic *EnvoyIngressController) getIngressesForService(service *v1.Service) []*ingressv1.Ingress {}
+func (eic *EnvoyIngressController) getIngressesForService(service *v1.Service) []*ingressv1.Ingress {
+	if service == nil{
+		return nil
+	}
+	if len(service.Spec.Selector) == 0 {
+		return nil
+	}
+	// TODO: check ingress
+
+	list, err := eic.ingressLister.Ingresses(service.Namespace).List(labels.Everything())
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("Cloudn't get ingresses for service %#v, err: %v", service., err))
+		return nil
+	}
+
+	var ingresses []*ingressv1.Ingress
+	for _, ingress := range list{
+		isIngressMatchService := false
+		if ingress.Namespace != service.Namespace {
+			continue
+		}
+		if ingress.Spec.DefaultBackend.Service.Name == service.Name{
+			isIngressMatchService = true
+		}
+		if len(ingress.Spec.Rules) != 0 && !isIngressMatchService {
+			RuleLoop:
+			for _, rule := range ingress.Spec.Rules {
+				if len(rule.IngressRuleValue.HTTP.Paths) != 0 {
+					for _, path := range rule.IngressRuleValue.HTTP.Paths {
+						if path.Backend.Service.Name == service.Name{
+							isIngressMatchService = true
+							break RuleLoop
+						}
+					}
+				}else if len(rule.HTTP.Paths) != 0 {
+					for _, path := range rule.HTTP.Paths {
+						if path.Backend.Service.Name == service.Name{
+							isIngressMatchService = true
+							break RuleLoop
+						}
+					}
+				}
+			}
+		}
+		ingresses = append(ingresses, ingress)
+	}
+
+	if len(ingresses) == 0 {
+		return nil
+	}
+
+	return ingresses
+}
 
 // getServicesForIngress returns a list of services that potentially match the ingress.
-func (eic *EnvoyIngressController) getServicesForIngress(ingress ingressv1.Ingress) ([]*v1.Service, error) {}
+func (eic *EnvoyIngressController) getServicesForIngress(ingress ingressv1.Ingress) ([]*v1.Service, error) {
+	var services []*v1.Service
+	var isServiceMatchIngress bool
+	list, err := eic.serviceLister.Services(ingress.Namespace).List(labels.Everything())
+	if err != nil {
+		utilruntime.HandleError(fmt.Errorf("Cloudn't get services fro ingress:%#v", ingress))
+		return nil, err
+	}
+	for _, service := range services {
+		isServiceMatchIngress = false
+		if service.Namespace != ingress.Namespace {
+			continue
+		}
+		if service.Name == ingress.Spec.DefaultBackend.Service.Name {
+			isServiceMatchIngress = true
+		}
+		if !isServiceMatchIngress && len(ingress.Spec.Rules) != 0{
+			RuleLoop:
+			for _, rule := range ingress.Spec.Rules {
+				if len(rule.IngressRuleValue.HTTP.Paths) != 0 {
+					for _, path := range rule.IngressRuleValue.HTTP.Paths {
+						if path.Backend.Service.Name == service.Name{
+							isServiceMatchIngress = true
+							break RuleLoop
+						}
+					}
+				}else if len(rule.HTTP.Paths) != 0 {
+					for _, path := range rule.HTTP.Paths {
+						if path.Backend.Service.Name == service.Name{
+							isServiceMatchIngress = true
+							break RuleLoop
+						}
+					}
+				}
+			}
+		}
+		services = append(services, service)
+	}
+
+	if len(services) == 0 {
+		return nil, fmt.Errorf("could not find services for ingress %s in namespace %s", ingress.Name, ingress.Namespace)
+	}
+
+	return services, nil
+}
 
 // getPodsForService returns a list for pods that potentially match the service.
-func (eic *EnvoyIngressController) getPodsForService(service v1.Service) ([]*v1.Pod, error) {}
+func (eic *EnvoyIngressController) getPodsForService(service v1.Service) ([]*v1.Pod, error) {
+	var selector labels.Selector
+	var pod *v1.Pod
+
+	if len(service.Spec.Selector) == 0 {
+		return nil, fmt.Errorf("Service %s has no selector", service.Name)
+	}
+
+	list, err := eic.podLister.Pods(service.Namespace).List(labels.Everything())
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't get pod for service %s in namespace %s", service.Name, service.Namespace)
+	}
+
+	var pods []*v1.Pod
+	for _, pod = range list{
+		var labelSelector *metav1.LabelSelector
+		if service.Namespace != pod.Namespace{
+			continue
+		}
+		err = metav1.Convert_Map_string_To_string_To_v1_LabelSelector(&service.Spec.Selector, labelSelector, nil)
+		if err != nil {
+			utilruntime.HandleError(fmt.Errorf("Failed to convert service %v's selector into label selector", service.Name))
+			return nil, err
+		}
+		selector, err = metav1.LabelSelectorAsSelector(labelSelector)
+		if err != nil {
+			// this should not happen if the DaemonSet passed validation
+			return nil, err
+		}
+		if selector.Empty() || !selector.Matches(labels.Set(pod.Labels)) {
+			continue
+		}
+		pods = append(pods, pod)
+	}
+
+	if len(pods) == 0 {
+		return nil, fmt.Errorf("Couldn't find pod for service %s in namespace %s", service.Name, service.Namespace)
+	}
+
+	return pods, nil
+}
 
 func (eic *EnvoyIngressController) getIngress(key string) error {}
 
@@ -720,6 +891,7 @@ func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingr
 
 func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
 
+// TODO: check all the ingress before enqueue
 func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {}
 
 func (eic *EnvoyIngressController) syncEnvoyService(key string) error {}
