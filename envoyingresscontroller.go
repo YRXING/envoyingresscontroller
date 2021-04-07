@@ -2,10 +2,12 @@ package envoyingresscontroller
 
 import (
 	"fmt"
+	"github.com/golang/protobuf/ptypes/duration"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"strings"
 	"time"
 	"reflect"
@@ -18,7 +20,6 @@ import (
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
-	appslisters "k8s.io/client-go/listers/apps/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	networkingListers "k8s.io/client-go/listers/networking/v1"
 	networkingInformers "k8s.io/client-go/informers/networking/v1"
@@ -33,6 +34,9 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/conversion"
 	envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	endpoint "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
+	listener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
+	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
 	keclient "github.com/kubeedge/kubeedge/cloud/pkg/common/client"
@@ -625,7 +629,7 @@ func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
 func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {
 	ingress, ok := obj.(*ingressv1.Ingress)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't convert obj into ingress, obj:%#v, err: %v", obj, err))
+		utilruntime.HandleError(fmt.Errorf("Cloudn't convert obj into ingress, obj:%#v", obj))
 	}
 	if *ingress.Spec.IngressClassName != ENVOYINGRESSCONTROLLERNAME {
 		return
@@ -680,7 +684,7 @@ func (eic *EnvoyIngressController) getIngressesForPod(pod *v1.Pod) []*ingressv1.
 		if len(tmpIngresses) == 0 {
 			continue
 		}
-		ingresses = append(ingresses, tmpIngresses)
+		ingresses = append(ingresses, tmpIngresses...)
 	}
 	if len(ingresses) == 0{
 		return nil
@@ -749,7 +753,7 @@ func (eic *EnvoyIngressController) getIngressesForService(service *v1.Service) [
 
 	list, err := eic.ingressLister.Ingresses(service.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get ingresses for service %#v, err: %v", service., err))
+		utilruntime.HandleError(fmt.Errorf("Cloudn't get ingresses for service %#v, err: %v", service.Name, err))
 		return nil
 	}
 
@@ -801,7 +805,7 @@ func (eic *EnvoyIngressController) getServicesForIngress(ingress ingressv1.Ingre
 		utilruntime.HandleError(fmt.Errorf("Cloudn't get services fro ingress:%#v", ingress))
 		return nil, err
 	}
-	for _, service := range services {
+	for _, service := range list {
 		isServiceMatchIngress = false
 		if service.Namespace != ingress.Namespace {
 			continue
@@ -840,7 +844,7 @@ func (eic *EnvoyIngressController) getServicesForIngress(ingress ingressv1.Ingre
 }
 
 // getPodsForService returns a list for pods that potentially match the service.
-func (eic *EnvoyIngressController) getPodsForService(service v1.Service) ([]*v1.Pod, error) {
+func (eic *EnvoyIngressController) getPodsForService(service *v1.Service) ([]*v1.Pod, error) {
 	var selector labels.Selector
 	var pod *v1.Pod
 
@@ -882,16 +886,88 @@ func (eic *EnvoyIngressController) getPodsForService(service v1.Service) ([]*v1.
 	return pods, nil
 }
 
-func (eic *EnvoyIngressController) getIngress(key string) error {}
+// TODO: sending envoy objects to edge will make it different to manage the objects. Need considering construct a object which k8s style
+func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Cluster, error) {
+	services, err := eic.getServicesForIngress(ingress)
+	if err != nil {
+		return nil, err
+	}
 
-// TODO: sending envoy objects to edge will make it different to manage the objects. Need consider construct a object which k8s style
-func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Cluster, error) {}
+	type Endpoint struct{
+		Address string
+		Port int
+	}
+	var clusters []*envoyv2.Cluster
+	var cluster *envoyv2.Cluster
+	for _, service := range services {
+		pods, err := eic.getPodsForService(service)
+		if err != nil {
+			return nil, err
+		}
+		for _, pod := range pods {
+			var endpoints []Endpoint
+			if len(pod.Status.PodIPs) == 0 {
+				continue
+			}
+			for _, port := range service.Spec.Ports{
+				portNum, err := podutil.FindPort(pod, &port)
+				if err != nil {
+					klog.V(4).Infof("Failed to find port for service %s/%s: %v", service.Namespace, service.Name, err)
+					return nil, err
+				}
+				endpoint := Endpoint{
+					Address: pod.Status.PodIP,
+					Port: portNum,
+				}
+				endpoints = append(endpoints, endpoint)
+			}
+			var lbEndpoints []*endpoint.LbEndpoint
+			var lbEndpoint *endpoint.LbEndpoint
+			for _, v := range endpoints {
+				lbEndpoint = &endpoint.LbEndpoint{
+					HostIdentifier: &endpoint.LbEndpoint_Endpoint{
+						Endpoint: &endpoint.Endpoint{
+							Address: &envoy_api_v2_core.Address{
+								Address: &envoy_api_v2_core.Address_SocketAddress{
+									SocketAddress: &envoy_api_v2_core.SocketAddress{
+										Protocol: envoy_api_v2_core.SocketAddress_TCP,
+										Address: v.Address,
+										PortSpecifier: &envoy_api_v2_core.SocketAddress_PortValue{
+											PortValue: uint32(v.Port),
+										},
+									},
+								},
+							},
+						},
+					},
+				}
+				lbEndpoints = append(lbEndpoints,lbEndpoint)
+			}
+			cluster = &envoyv2.Cluster{
+				Name: pod.Namespace+"-"+pod.Name,
+				ConnectTimeout: &duration.Duration{Seconds: 1},
+				ClusterDiscoveryType: &envoyv2.Cluster_Type{envoyv2.Cluster_STATIC},
+				LbPolicy: envoyv2.Cluster_ROUND_ROBIN,
+				LoadAssignment: &envoyv2.ClusterLoadAssignment{
+					ClusterName: pod.Namespace+"-"+pod.Name+"lb",
+					Endpoints: []*endpoint.LocalityLbEndpoints{
+						&endpoint.LocalityLbEndpoints{
+							LbEndpoints: lbEndpoints,
+						},
+					},
+				},
+			}
+			clusters = append(clusters, cluster)
+		}
+	}
+}
 
-func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Listener, error) {}
+func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Listener, error) {
+
+}
 
 func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
 
-// TODO: check all the ingress before enqueue
 func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {}
 
 func (eic *EnvoyIngressController) syncEnvoyService(key string) error {}
