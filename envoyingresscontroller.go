@@ -2,7 +2,11 @@ package envoyingresscontroller
 
 import (
 	"fmt"
+	envoy_api_v2_route "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
+	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"github.com/golang/protobuf/ptypes/duration"
+	"github.com/golang/protobuf/ptypes/wrappers"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -32,10 +36,14 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	ingressv1 "k8s.io/api/networking/v1"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/conversion"
 	envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
 	endpoint "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
 	listener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
+	http_router "github.com/envoyproxy/go-control-plane/envoy/config/filter/http/router/v2"
+	http_conn_manager "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
+	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher"
+	"github.com/envoyproxy/go-control-plane/pkg/conversion"
 	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
 	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
@@ -904,6 +912,8 @@ func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingr
 		if err != nil {
 			return nil, err
 		}
+		var lbEndpoints []*endpoint.LbEndpoint
+		var lbEndpoint *endpoint.LbEndpoint
 		for _, pod := range pods {
 			var endpoints []Endpoint
 			if len(pod.Status.PodIPs) == 0 {
@@ -921,8 +931,6 @@ func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingr
 				}
 				endpoints = append(endpoints, endpoint)
 			}
-			var lbEndpoints []*endpoint.LbEndpoint
-			var lbEndpoint *endpoint.LbEndpoint
 			for _, v := range endpoints {
 				lbEndpoint = &endpoint.LbEndpoint{
 					HostIdentifier: &endpoint.LbEndpoint_Endpoint{
@@ -943,27 +951,161 @@ func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingr
 				}
 				lbEndpoints = append(lbEndpoints,lbEndpoint)
 			}
-			cluster = &envoyv2.Cluster{
-				Name: pod.Namespace+"-"+pod.Name,
-				ConnectTimeout: &duration.Duration{Seconds: 1},
-				ClusterDiscoveryType: &envoyv2.Cluster_Type{envoyv2.Cluster_STATIC},
-				LbPolicy: envoyv2.Cluster_ROUND_ROBIN,
-				LoadAssignment: &envoyv2.ClusterLoadAssignment{
-					ClusterName: pod.Namespace+"-"+pod.Name+"lb",
-					Endpoints: []*endpoint.LocalityLbEndpoints{
-						&endpoint.LocalityLbEndpoints{
-							LbEndpoints: lbEndpoints,
-						},
+		}
+		cluster = &envoyv2.Cluster{
+			Name: service.Namespace+"-"+service.Name,
+			ConnectTimeout: &duration.Duration{Seconds: 1},
+			ClusterDiscoveryType: &envoyv2.Cluster_Type{envoyv2.Cluster_STATIC},
+			LbPolicy: envoyv2.Cluster_ROUND_ROBIN,
+			LoadAssignment: &envoyv2.ClusterLoadAssignment{
+				ClusterName: service.Namespace+"-"+service.Name+"lb",
+				Endpoints: []*endpoint.LocalityLbEndpoints{
+					&endpoint.LocalityLbEndpoints{
+						LbEndpoints: lbEndpoints,
 					},
 				},
-			}
-			clusters = append(clusters, cluster)
+			},
 		}
+		clusters = append(clusters, cluster)
 	}
+	if len(clusters) == 0 {
+		return nil, fmt.Errorf("Cloudn't get clusters for ingress %v in namespace %v", ingress.Name, ingress.Namespace)
+	}
+
+	return clusters, nil
 }
 
-func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress) ([]*envoyv2.Listener, error) {
+func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress, clusters []*envoyv2.Cluster) ([]*envoyv2.Listener, error) {
+	// need considering using tls for connecting to listeners
+	var tlsEnable = false
+	if len(ingress.Spec.TLS) != 0 {
+		tlsEnable = true
+	}
 
+	httpFilterRouter := &http_router.Router{
+		DynamicStats: &wrapperspb.BoolValue{
+			Value: true,
+		},
+	}
+	httpFilterRouterStuct, err := conversion.MessageToStruct(httpFilterRouter)
+	if err != nil {
+		klog.Infof("Failed to convert httpFilterRouter message to struct")
+		return nil, err
+	}
+
+	var listener  *envoyv2.Listener
+	var listeners []*envoyv2.Listener
+	var virtualHost *envoy_api_v2_route.VirtualHost
+	var virtualHosts []*envoy_api_v2_route.VirtualHost
+	var routes []*envoy_api_v2_route.Route
+	//1.deal with ingress's path
+	for _, rule := range ingress.Spec.Rules {
+		for _, path := range rule.HTTP.Paths {
+			service, err := eic.serviceLister.Services(ingress.Namespace).Get(path.Backend.Service.Name)
+			if err != nil {
+				klog.V(4).Infof("Failed to get service %s in namespace %s from service lister", service.Name, service.Namespace)
+				continue
+			}
+			clusterName := service.Namespace+"-"+service.Name
+			var route *envoy_api_v2_route.Route
+			switch *path.PathType {
+			case ingressv1.PathTypeExact:
+				route = &envoy_api_v2_route.Route{
+					Match: &envoy_api_v2_route.RouteMatch{
+						PathSpecifier: &envoy_api_v2_route.RouteMatch_Path{
+							Path: path.Path,
+						},
+						CaseSensitive: &wrapperspb.BoolValue{
+							Value: false,
+						},
+					},
+					Action: &envoy_api_v2_route.Route_Route{
+						Route: &envoy_api_v2_route.RouteAction{
+							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
+								Cluster: clusterName,
+							},
+						},
+					},
+				}
+			case ingressv1.PathTypePrefix:
+				route = &envoy_api_v2_route.Route{
+					Match: &envoy_api_v2_route.RouteMatch{
+						PathSpecifier: &envoy_api_v2_route.RouteMatch_Prefix{
+							Prefix: path.Path
+						},
+						CaseSensitive: &wrapperspb.BoolValue{
+							Value: false,
+						},
+					},
+					Action: &envoy_api_v2_route.Route_Route{
+						Route: &envoy_api_v2_route.RouteAction{
+							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
+								Cluster: clusterName,
+							},
+						},
+					},
+				}
+			case ingressv1.PathTypeImplementationSpecific:
+				//In our envoy ingress controller, this field refers to envoy listener's regex field
+				route = &envoy_api_v2_route.Route{
+					Match: &envoy_api_v2_route.RouteMatch{
+						PathSpecifier: &envoy_api_v2_route.RouteMatch_SafeRegex{
+							SafeRegex: &matcher.RegexMatcher{
+								EngineType: &matcher.RegexMatcher_GoogleRe2{
+									&matcher.RegexMatcher_GoogleRE2{},
+								},
+								Regex: clusterName,
+							},
+						},
+						CaseSensitive: &wrapperspb.BoolValue{
+							Value: false,
+						},
+					},
+					Action: &envoy_api_v2_route.Route_Route{
+						Route: &envoy_api_v2_route.RouteAction{
+							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
+								Cluster: clusterName,
+							},
+						},
+					},
+				}
+			}
+			routes = append(routes, route)
+		}
+		virtualHost = &envoy_api_v2_route.VirtualHost{
+			Name: rule.Host+"vh",
+			Domains: []string{
+				rule.Host,
+			},
+			Routes: routes,
+		}
+		listenFilterHttpConn := &http_conn_manager.HttpConnectionManager{
+			StatPrefix: "envoy_ingress_http",
+			RouteSpecifier: &http_conn_manager.HttpConnectionManager_RouteConfig{
+				RouteConfig: &envoyv2.RouteConfiguration{
+					Name: ingress.Namespace+"-"+ingress.Name+"-RouteConfig",
+					VirtualHosts: []*envoy_api_v2_route.VirtualHost{
+						virtualHost,
+					},
+				},
+			},
+			HttpFilters: []*http_conn_manager.HttpFilter{
+				&http_conn_manager.HttpFilter{
+					Name: "envoy.router",
+					ConfigType: &http_conn_manager.HttpFilter_Config{
+						Config: httpFilterRouterStuct,
+					},
+				},
+			},
+		}
+		listenFilterHttpConnStruct, err := conversion.MessageToStruct(listenFilterHttpConn)
+		if err != nil {
+			klog.Infof("Failed to convert listenFilterHttpConn message to struct")
+			return nil, err
+		}
+		listener = &envoyv2.Listener{
+		}
+	}
 }
 
 func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
