@@ -155,7 +155,6 @@ func NewEnvoyIngressController(
 		eventRecorder: eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "envoyingress-controller"}),
 		envoyIngressControllerConfiguration: envoyIngressControllerConfiguration,
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress"),
-		envoyServiceQueue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress-cluster"),
 	}
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: eic.addIngress,
@@ -547,7 +546,6 @@ func (eic *EnvoyIngressController) deleteService(obj interface{}){
 func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer eic.queue.ShutDown()
-	defer eic.envoyServiceQueue.ShutDown()
 
 	klog.Infof("Starting envoy ingress controller")
 	defer klog.Infof("Shutting down envoy ingress controller")
@@ -560,10 +558,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 		go wait.Until(eic.runIngressWorkers, eic.envoyIngressControllerConfiguration.syncInterval, stopCh)
 	}
 
-	for i:= 0; i < eic.envoyIngressControllerConfiguration.envoyServiceSyncWorkerNumber; i++{
-		go wait.Until(eic.runEnvoyServiceWorkers, eic.envoyIngressControllerConfiguration.syncInterval, stopCh)
-	}
-
 	<-stopCh
 }
 
@@ -572,10 +566,7 @@ func (eic *EnvoyIngressController) runIngressWorkers(){
 	}
 }
 
-func (eic *EnvoyIngressController) runEnvoyServiceWorkers(){
-	for eic.processNextEnvoyServiceWorkItem(){
-	}
-}
+
 
 // processNextIngressWorkItem deals with one key off the queue.  It returns false when it's time to quit.
 func (eic *EnvoyIngressController) processNextIngressWorkItem() bool {
@@ -597,25 +588,7 @@ func (eic *EnvoyIngressController) processNextIngressWorkItem() bool {
 	return true
 }
 
-// processNextClusterWorkItem deals with one key off the queue.  It returns false when it's time to quit.
-func (eic *EnvoyIngressController) processNextEnvoyServiceWorkItem() bool {
-	envoyServiceKey, quit := eic.envoyServiceQueue.Get()
-	if quit {
-		return false
-	}
-	defer eic.envoyServiceQueue.Done(envoyServiceKey)
 
-	err := eic.syncEnvoyService(envoyServiceKey.(string))
-	if err == nil {
-		eic.envoyServiceQueue.Forget(envoyServiceKey)
-		return true
-	}
-
-	utilruntime.HandleError(fmt.Errorf("%v failed with: %v", envoyServiceKey, err))
-	eic.envoyServiceQueue.AddRateLimited(envoyServiceKey)
-
-	return true
-}
 
 func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
 	// ingore ingresses which mismatch the controller type
@@ -649,25 +622,8 @@ func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, aft
 	eic.queue.AddAfter(key, after)
 }
 
-func (eic *EnvoyIngressController) enqueueEnovyService(envoySerivce *v1alpha1.EnvoyService) {
-	key, err := controller.KeyFunc(envoySerivce)
-	if err != nil{
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %#v: %v", envoySerivce, err))
-		return
-	}
 
-	eic.envoyServiceQueue.Add(key)
-}
 
-func (eic *EnvoyIngressController) enqueueEnvoyServiceAfter(obj interface{}, after time.Duration) {
-	key, err := controller.KeyFunc(obj)
-	if err != nil{
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
-		return
-	}
-
-	eic.envoyServiceQueue.AddAfter(key, after)
-}
 
 func (eic *EnvoyIngressController) storeIngressStatus(){}
 
