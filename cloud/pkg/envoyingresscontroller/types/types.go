@@ -1,15 +1,15 @@
-package v1alpha1
+package types
 
 import (
-	envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	metaconfig "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/meta/v1alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"time"
+envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+metaconfig "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/meta/v1alpha1"
+metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+"time"
 )
 
 
 // EnvoyIngressController indicates the config of EnvoyIngressController module
-type EnvoyIngressController struct {
+type EnvoyIngressControllerConfiguration struct {
 	// Enable indicates whether EnvoyIngressController is enabled,
 	// if set to false (for debugging etc.), skip checking other EnvoyIngressController configs.
 	// default true
