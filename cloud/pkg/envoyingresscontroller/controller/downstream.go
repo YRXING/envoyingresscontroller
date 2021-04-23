@@ -22,14 +22,18 @@ import (
 
 //Downstream Controller watch kubernetes api server and send change to edge
 type DownstreamController struct {
+	//it is a clientSet
 	kubeClient kubernetes.Interface
 
+	//send and receive message
 	messageLayer messagelayer.MessageLayer
 
+	//manage configmap events
 	configmapManager *manager.ConfigMapManager
 
 	nodeManager *manager.NodesManager
 
+	// use it to querey which node to send
 	lc *manager.LocationCache
 
 }

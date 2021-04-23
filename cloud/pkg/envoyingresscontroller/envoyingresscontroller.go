@@ -2,52 +2,45 @@ package envoyingresscontroller
 
 import (
 	"fmt"
-	envoy_api_v2_route "github.com/envoyproxy/go-control-plane/envoy/api/v2/route"
-	route "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"github.com/golang/protobuf/ptypes/duration"
-	"github.com/golang/protobuf/ptypes/wrappers"
-	"google.golang.org/protobuf/types/known/wrapperspb"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config"
+	eic "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/controller"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/types"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	"strings"
-	"time"
+	"os"
 	"reflect"
+	"strings"
 	"sync"
+	"time"
 
-	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
+	envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
+	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
+	endpoint "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
+	v1 "k8s.io/api/core/v1"
+	ingressv1 "k8s.io/api/networking/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
+	networkingInformers "k8s.io/client-go/informers/networking/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	networkingListers "k8s.io/client-go/listers/networking/v1"
-	networkingInformers "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/component-base/metrics/prometheus/ratelimiter"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/kubernetes/pkg/controller"
-	"github.com/kubeedge/beehive/pkg/core/model"
-	ingressv1 "k8s.io/api/networking/v1"
-	v1 "k8s.io/api/core/v1"
-	envoyv2 "github.com/envoyproxy/go-control-plane/envoy/api/v2"
-	endpoint "github.com/envoyproxy/go-control-plane/envoy/api/v2/endpoint"
-	listener "github.com/envoyproxy/go-control-plane/envoy/api/v2/listener"
-	http_router "github.com/envoyproxy/go-control-plane/envoy/config/filter/http/router/v2"
-	http_conn_manager "github.com/envoyproxy/go-control-plane/envoy/config/filter/network/http_connection_manager/v2"
-	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
-	matcher "github.com/envoyproxy/go-control-plane/envoy/type/matcher"
-	"github.com/envoyproxy/go-control-plane/pkg/conversion"
-	"github.com/envoyproxy/go-control-plane/envoy/api/v2/core"
-	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config/v1alpha1"
+
 	"github.com/kubeedge/beehive/pkg/core"
 	keclient "github.com/kubeedge/kubeedge/cloud/pkg/common/client"
+	keinformers "github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	"k8s.io/klog/v2"
 )
 
@@ -60,29 +53,16 @@ const(
 	NODEGROUPLABEL = "nodegroup"
 )
 
-//KubeedgeClient is used for sending message to and from cloudhub.
-//It's communication is based upon beehive.
-type KubeedgeClient struct{
-	Source     string
-	Destination  string
-}
-
-//EnvoyIngressControllerConfiguration's field affects how controller works
-type EnvoyIngressControllerConfiguration struct{
-	syncInterval time.Duration
-	//envoy related fields
-	ingressSyncWorkerNumber int
-	envoyServiceSyncWorkerNumber int
-}
 
 // EnvoyIngressController is responsible for converting envoy ingress to envoy configuration
 // and synchronizing it to cloudhub which will dispatch it's received objects to edgehub.
+// It use beehive context message layer
 type EnvoyIngressController struct{
 	enable bool
+	downstream *eic.DownstreamController
 	kubeClient clientset.Interface
-	kubeedgeClient KubeedgeClient
 
-	envoyIngressControllerConfiguration EnvoyIngressControllerConfiguration
+	envoyIngressControllerConfiguration types.EnvoyIngressControllerConfiguration
 
 	eventRecorder record.EventRecorder
 
@@ -125,35 +105,38 @@ type EnvoyIngressController struct{
 	queue workqueue.RateLimitingInterface
 }
 
-// Send sends message to destination module which was defined in KubeedgeClient's destination field
-func (ke *KubeedgeClient)Send(message string, operation string) error {}
-
-// Receive receives message send to this module
-func (ke *KubeedgeClient)Receive(message string) error {}
 
 // NewEnvoyIngressController creates a new EnvoyIngressController
-func NewEnvoyIngressController(
+func newEnvoyIngressController(
 	ingressInformer networkingInformers.IngressInformer,
 	podInformer coreinformers.PodInformer,
 	nodeInformer coreinformers.NodeInformer,
 	serviceInformer coreinformers.ServiceInformer,
-	envoyIngressControllerConfiguration EnvoyIngressControllerConfiguration,
 	kubeCLient clientset.Interface,
 	enable bool,
-	)(*EnvoyIngressController, error){
+	)(*EnvoyIngressController){
+	if !enable {
+		return &EnvoyIngressController{enable: false}
+	}
+	downstream,err := eic.NewDownStreamController(keinformers.GetInformersManager().GetK8sInformerFactory(),keinformers.GetInformersManager())
+	if err!= nil{
+		klog.Errorf("new upstream controller failed with err: %s",err)
+		os.Exit(1)
+	}
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartStructuredLogging(0)
 	eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: kubeCLient.CoreV1().Events("")})
 
 	if kubeCLient != nil && kubeCLient.CoreV1().RESTClient().GetRateLimiter() != nil{
 		if err := ratelimiter.RegisterMetricAndTrackRateLimiterUsage("envoyingress_controller", kubeCLient.CoreV1().RESTClient().GetRateLimiter()); err!=nil{
-			return nil, err
+			return nil
 		}
 	}
 	eic := &EnvoyIngressController{
+		enable: enable,
+		downstream: downstream,
 		kubeClient: kubeCLient,
 		eventRecorder: eventBroadcaster.NewRecorder(scheme.Scheme, v1.EventSource{Component: "envoyingress-controller"}),
-		envoyIngressControllerConfiguration: envoyIngressControllerConfiguration,
 		queue: workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress"),
 	}
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -191,11 +174,10 @@ func NewEnvoyIngressController(
 	eic.enable = enable
 	eic.syncHandler = eic.syncEnvoyIngress
 
-	return eic, nil
+	return eic
 }
 
-// Register registers envoy ingress controller to beehive core.
-func Register(eic *v1alpha1.EnvoyIngressController){
+func Register(eicc *types.EnvoyIngressControllerConfiguration){
 	// Get clientSet from keclient package
 	kubeClient := keclient.GetKubeClient()
 	sharedInformers := informers.NewSharedInformerFactory(kubeClient, time.Minute)
@@ -203,13 +185,9 @@ func Register(eic *v1alpha1.EnvoyIngressController){
 	podInformer := sharedInformers.Core().V1().Pods()
 	nodeInformer := sharedInformers.Core().V1().Nodes()
 	serviceInformer := sharedInformers.Core().V1().Services()
-	envoyIngressControllerConfiguration := EnvoyIngressControllerConfiguration{
-		syncInterval: eic.SyncInterval,
-		ingressSyncWorkerNumber: eic.IngressSyncWorkerNumber,
-		envoyServiceSyncWorkerNumber: eic.EnvoyServiceSyncWorkerNumber,
-	}
+	config.InitConfigure(eicc)
 	// TODO: deal with error
-	envoyIngresscontroller, _ := NewEnvoyIngressController(ingressInformer,podInformer,nodeInformer,serviceInformer,envoyIngressControllerConfiguration,kubeClient,eic.Enable)
+	envoyIngresscontroller := newEnvoyIngressController(ingressInformer,podInformer,nodeInformer,serviceInformer,kubeClient,eicc.Enable)
 	core.Register(envoyIngresscontroller)
 }
 
@@ -229,7 +207,11 @@ func (eic *EnvoyIngressController) Enable() bool {
 }
 
 // Start starts controller
-func (eic *EnvoyIngressController) Start() {}
+func (eic *EnvoyIngressController) Start() {
+	if err := eic.downstream.Start();err!=nil{
+		klog.Fatal("start downstream failed with error: %s",err)
+	}
+}
 
 // addIngress adds the given ingress to the queue
 func (eic *EnvoyIngressController) addIngress(obj interface{}){
@@ -554,8 +536,8 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 		return
 	}
 
-	for i := 0; i < eic.envoyIngressControllerConfiguration.ingressSyncWorkerNumber; i++ {
-		go wait.Until(eic.runIngressWorkers, eic.envoyIngressControllerConfiguration.syncInterval, stopCh)
+	for i := 0; i < eic.envoyIngressControllerConfiguration.IngressSyncWorkerNumber; i++ {
+		go wait.Until(eic.runIngressWorkers, eic.envoyIngressControllerConfiguration.SyncInterval, stopCh)
 	}
 
 	<-stopCh
@@ -928,146 +910,154 @@ func (eic *EnvoyIngressController) getClustersFromIngress(ingress ingressv1.Ingr
 	return clusters, nil
 }
 
-func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress, clusters []*envoyv2.Cluster) ([]*envoyv2.Listener, error) {
-	// need considering using tls for connecting to listeners
-	var tlsEnable = false
-	if len(ingress.Spec.TLS) != 0 {
-		tlsEnable = true
-	}
+//func (eic *EnvoyIngressController) getListenerFromIngress(ingress ingressv1.Ingress, clusters []*envoyv2.Cluster) ([]*envoyv2.Listener, error) {
+//	// need considering using tls for connecting to listeners
+//	var tlsEnable = false
+//	if len(ingress.Spec.TLS) != 0 {
+//		tlsEnable = true
+//	}
+//
+//	httpFilterRouter := &http_router.Router{
+//		DynamicStats: &wrapperspb.BoolValue{
+//			Value: true,
+//		},
+//	}
+//	httpFilterRouterStuct, err := conversion.MessageToStruct(httpFilterRouter)
+//	if err != nil {
+//		klog.Infof("Failed to convert httpFilterRouter message to struct")
+//		return nil, err
+//	}
+//
+//	var listener  *envoyv2.Listener
+//	var listeners []*envoyv2.Listener
+//	var virtualHost *envoy_api_v2_route.VirtualHost
+//	var virtualHosts []*envoy_api_v2_route.VirtualHost
+//	var routes []*envoy_api_v2_route.Route
+//	//1.deal with ingress's path
+//	for _, rule := range ingress.Spec.Rules {
+//		for _, path := range rule.HTTP.Paths {
+//			service, err := eic.serviceLister.Services(ingress.Namespace).Get(path.Backend.Service.Name)
+//			if err != nil {
+//				klog.V(4).Infof("Failed to get service %s in namespace %s from service lister", service.Name, service.Namespace)
+//				continue
+//			}
+//			clusterName := service.Namespace+"-"+service.Name
+//			var route *envoy_api_v2_route.Route
+//			switch *path.PathType {
+//			case ingressv1.PathTypeExact:
+//				route = &envoy_api_v2_route.Route{
+//					Match: &envoy_api_v2_route.RouteMatch{
+//						PathSpecifier: &envoy_api_v2_route.RouteMatch_Path{
+//							Path: path.Path,
+//						},
+//						CaseSensitive: &wrapperspb.BoolValue{
+//							Value: false,
+//						},
+//					},
+//					Action: &envoy_api_v2_route.Route_Route{
+//						Route: &envoy_api_v2_route.RouteAction{
+//							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
+//								Cluster: clusterName,
+//							},
+//						},
+//					},
+//				}
+//			case ingressv1.PathTypePrefix:
+//				route = &envoy_api_v2_route.Route{
+//					Match: &envoy_api_v2_route.RouteMatch{
+//						PathSpecifier: &envoy_api_v2_route.RouteMatch_Prefix{
+//							Prefix: path.Path,
+//						},
+//						CaseSensitive: &wrapperspb.BoolValue{
+//							Value: false,
+//						},
+//					},
+//					Action: &envoy_api_v2_route.Route_Route{
+//						Route: &envoy_api_v2_route.RouteAction{
+//							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
+//								Cluster: clusterName,
+//							},
+//						},
+//					},
+//				}
+//			case ingressv1.PathTypeImplementationSpecific:
+//				//In our envoy ingress controller, this field refers to envoy listener's regex field
+//				route = &envoy_api_v2_route.Route{
+//					Match: &envoy_api_v2_route.RouteMatch{
+//						PathSpecifier: &envoy_api_v2_route.RouteMatch_SafeRegex{
+//							SafeRegex: &matcher.RegexMatcher{
+//								EngineType: &matcher.RegexMatcher_GoogleRe2{
+//									&matcher.RegexMatcher_GoogleRE2{},
+//								},
+//								Regex: clusterName,
+//							},
+//						},
+//						CaseSensitive: &wrapperspb.BoolValue{
+//							Value: false,
+//						},
+//					},
+//					Action: &envoy_api_v2_route.Route_Route{
+//						Route: &envoy_api_v2_route.RouteAction{
+//							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
+//								Cluster: clusterName,
+//							},
+//						},
+//					},
+//				}
+//			}
+//			routes = append(routes, route)
+//		}
+//		virtualHost = &envoy_api_v2_route.VirtualHost{
+//			Name: rule.Host+"vh",
+//			Domains: []string{
+//				rule.Host,
+//			},
+//			Routes: routes,
+//		}
+//		listenFilterHttpConn := &http_conn_manager.HttpConnectionManager{
+//			StatPrefix: "envoy_ingress_http",
+//			RouteSpecifier: &http_conn_manager.HttpConnectionManager_RouteConfig{
+//				RouteConfig: &envoyv2.RouteConfiguration{
+//					Name: ingress.Namespace+"-"+ingress.Name+"-RouteConfig",
+//					VirtualHosts: []*envoy_api_v2_route.VirtualHost{
+//						virtualHost,
+//					},
+//				},
+//			},
+//			HttpFilters: []*http_conn_manager.HttpFilter{
+//				&http_conn_manager.HttpFilter{
+//					Name: "envoy.router",
+//					ConfigType: &http_conn_manager.HttpFilter_Config{
+//						Config: httpFilterRouterStuct,
+//					},
+//				},
+//			},
+//		}
+//		listenFilterHttpConnStruct, err := conversion.MessageToStruct(listenFilterHttpConn)
+//		if err != nil {
+//			klog.Infof("Failed to convert listenFilterHttpConn message to struct")
+//			return nil, err
+//		}
+//		listener = &envoyv2.Listener{
+//			Name: "listener_with_static_route_port_"+rule.,
+//		}
+//	}
+//}
 
-	httpFilterRouter := &http_router.Router{
-		DynamicStats: &wrapperspb.BoolValue{
-			Value: true,
-		},
-	}
-	httpFilterRouterStuct, err := conversion.MessageToStruct(httpFilterRouter)
-	if err != nil {
-		klog.Infof("Failed to convert httpFilterRouter message to struct")
-		return nil, err
-	}
-
-	var listener  *envoyv2.Listener
-	var listeners []*envoyv2.Listener
-	var virtualHost *envoy_api_v2_route.VirtualHost
-	var virtualHosts []*envoy_api_v2_route.VirtualHost
-	var routes []*envoy_api_v2_route.Route
-	//1.deal with ingress's path
-	for _, rule := range ingress.Spec.Rules {
-		for _, path := range rule.HTTP.Paths {
-			service, err := eic.serviceLister.Services(ingress.Namespace).Get(path.Backend.Service.Name)
-			if err != nil {
-				klog.V(4).Infof("Failed to get service %s in namespace %s from service lister", service.Name, service.Namespace)
-				continue
-			}
-			clusterName := service.Namespace+"-"+service.Name
-			var route *envoy_api_v2_route.Route
-			switch *path.PathType {
-			case ingressv1.PathTypeExact:
-				route = &envoy_api_v2_route.Route{
-					Match: &envoy_api_v2_route.RouteMatch{
-						PathSpecifier: &envoy_api_v2_route.RouteMatch_Path{
-							Path: path.Path,
-						},
-						CaseSensitive: &wrapperspb.BoolValue{
-							Value: false,
-						},
-					},
-					Action: &envoy_api_v2_route.Route_Route{
-						Route: &envoy_api_v2_route.RouteAction{
-							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
-								Cluster: clusterName,
-							},
-						},
-					},
-				}
-			case ingressv1.PathTypePrefix:
-				route = &envoy_api_v2_route.Route{
-					Match: &envoy_api_v2_route.RouteMatch{
-						PathSpecifier: &envoy_api_v2_route.RouteMatch_Prefix{
-							Prefix: path.Path,
-						},
-						CaseSensitive: &wrapperspb.BoolValue{
-							Value: false,
-						},
-					},
-					Action: &envoy_api_v2_route.Route_Route{
-						Route: &envoy_api_v2_route.RouteAction{
-							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
-								Cluster: clusterName,
-							},
-						},
-					},
-				}
-			case ingressv1.PathTypeImplementationSpecific:
-				//In our envoy ingress controller, this field refers to envoy listener's regex field
-				route = &envoy_api_v2_route.Route{
-					Match: &envoy_api_v2_route.RouteMatch{
-						PathSpecifier: &envoy_api_v2_route.RouteMatch_SafeRegex{
-							SafeRegex: &matcher.RegexMatcher{
-								EngineType: &matcher.RegexMatcher_GoogleRe2{
-									&matcher.RegexMatcher_GoogleRE2{},
-								},
-								Regex: clusterName,
-							},
-						},
-						CaseSensitive: &wrapperspb.BoolValue{
-							Value: false,
-						},
-					},
-					Action: &envoy_api_v2_route.Route_Route{
-						Route: &envoy_api_v2_route.RouteAction{
-							ClusterSpecifier: &envoy_api_v2_route.RouteAction_Cluster{
-								Cluster: clusterName,
-							},
-						},
-					},
-				}
-			}
-			routes = append(routes, route)
-		}
-		virtualHost = &envoy_api_v2_route.VirtualHost{
-			Name: rule.Host+"vh",
-			Domains: []string{
-				rule.Host,
-			},
-			Routes: routes,
-		}
-		listenFilterHttpConn := &http_conn_manager.HttpConnectionManager{
-			StatPrefix: "envoy_ingress_http",
-			RouteSpecifier: &http_conn_manager.HttpConnectionManager_RouteConfig{
-				RouteConfig: &envoyv2.RouteConfiguration{
-					Name: ingress.Namespace+"-"+ingress.Name+"-RouteConfig",
-					VirtualHosts: []*envoy_api_v2_route.VirtualHost{
-						virtualHost,
-					},
-				},
-			},
-			HttpFilters: []*http_conn_manager.HttpFilter{
-				&http_conn_manager.HttpFilter{
-					Name: "envoy.router",
-					ConfigType: &http_conn_manager.HttpFilter_Config{
-						Config: httpFilterRouterStuct,
-					},
-				},
-			},
-		}
-		listenFilterHttpConnStruct, err := conversion.MessageToStruct(listenFilterHttpConn)
-		if err != nil {
-			klog.Infof("Failed to convert listenFilterHttpConn message to struct")
-			return nil, err
-		}
-		listener = &envoyv2.Listener{
-			Name: "listener_with_static_route_port_"+rule.,
-		}
-	}
+func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*types.EnvoyService, error) {
+	return nil,nil
 }
 
-func (eic *EnvoyIngressController) getEnvoyServiceForIngress(ingress ingressv1.Ingress) ([]*v1alpha1.EnvoyService, error) {}
+func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
+	return nil
+}
 
-func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {}
-
-func (eic *EnvoyIngressController) syncEnvoyService(key string) error {}
+func (eic *EnvoyIngressController) syncEnvoyService(key string) error {
+	return nil
+}
 
 // syncNodeGroupsWithNodes should be called first when the controller begins to run.
 // It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
-func (eic *EnvoyIngressController) syncNodeGroupsWithNodes() error {}
+func (eic *EnvoyIngressController) syncNodeGroupsWithNodes() error {
+	return nil
+}
