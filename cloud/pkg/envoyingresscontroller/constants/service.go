@@ -11,4 +11,8 @@ const (
 
 	// Group
 	GroupResource = "resource"
+
+	//ResourceType
+	ResourceTypeConfigMapList = "configmaplist"
+	ResourceTypeConfigMap = "configmap"
 )

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/types"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 	"sync"
 
 )
@@ -10,10 +10,10 @@ var Config Configure
 var once sync.Once
 
 type Configure struct {
-	types.EnvoyIngressControllerConfiguration
+	v1alpha1.EnvoyIngressControllerConfiguration
 }
 
-func InitConfigure(eicc *types.EnvoyIngressControllerConfiguration) {
+func InitConfigure(eicc *v1alpha1.EnvoyIngressControllerConfiguration) {
 	once.Do(func() {
 		Config = Configure{
 			EnvoyIngressControllerConfiguration: *eicc,

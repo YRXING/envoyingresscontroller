@@ -42,6 +42,7 @@ import (
 	keclient "github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	keinformers "github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	"k8s.io/klog/v2"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 // TODO: Need consider situations where ingress contains configmap object
@@ -62,7 +63,7 @@ type EnvoyIngressController struct{
 	downstream *eic.DownstreamController
 	kubeClient clientset.Interface
 
-	envoyIngressControllerConfiguration types.EnvoyIngressControllerConfiguration
+	envoyIngressControllerConfiguration v1alpha1.EnvoyIngressControllerConfiguration
 
 	eventRecorder record.EventRecorder
 
@@ -177,7 +178,7 @@ func newEnvoyIngressController(
 	return eic
 }
 
-func Register(eicc *types.EnvoyIngressControllerConfiguration){
+func Register(eicc *v1alpha1.EnvoyIngressControllerConfiguration){
 	// Get clientSet from keclient package
 	kubeClient := keclient.GetKubeClient()
 	sharedInformers := informers.NewSharedInformerFactory(kubeClient, time.Minute)

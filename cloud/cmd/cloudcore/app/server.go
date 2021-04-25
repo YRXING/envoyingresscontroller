@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -113,4 +114,5 @@ func registerModules(c *v1alpha1.CloudCoreConfig) {
 	cloudstream.Register(c.Modules.CloudStream)
 	router.Register(c.Modules.Router)
 	dynamiccontroller.Register(c.Modules.DynamicController)
+	envoyingresscontroller.Register(c.Modules.EnvoyIngressController)
 }
