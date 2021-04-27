@@ -18,4 +18,8 @@ func isEnvoyResource(resType string) bool{
 	//TODO: return resType == envoyConfig
 	return resType == constants.ResourceTypeConfigMap || resType == constants.ResourceTypeConfigMapList
 }
+func (e *envoyControlPlane) processInsert(message model.Message)  {
+
+}
+
 
