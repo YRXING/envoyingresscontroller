@@ -392,6 +392,15 @@ type MetaManager struct {
 	MetaServer *MetaServer `json:"metaServer,omitempty"`
 }
 
+//EnvoyControlPlaneConfig indicates the EnvoyContorlPlane module config
+type EnvoyControlPlaneConfig struct {
+	Enable bool `json:"enable,omitempty"`
+	// ContextSendGroup indicates send group
+	ContextSendGroup string `json:"contextSendGroup,omitempty"`
+	// ContextSendModule indicates send module
+	ContextSendModule string `json:"contextSendModule,omitempty"`
+}
+
 type MetaServer struct {
 	Enable bool `json:"enable,omitempty"`
 	Debug  bool `json:"debug,omitempty"`
