@@ -84,7 +84,7 @@ func (dc *DownstreamController) syncConfigMap(){
 			for _, n := range nodes{
 				msg := model.NewMessage("")
 				msg.SetResourceVersion(configMap.ResourceVersion)
-				resource , err := messagelayer.BuildResource(n,configMap.Namespace,model.ResourceTypeConfigmap,configMap.Name)
+				resource , err := messagelayer.BuildResource(n,constants.EnvoyNamespace,model.ResourceTypeConfigmap,configMap.Name)
 				if err != nil{
 					klog.Warningf("build message resource failed with err: %s",err)
 					continue

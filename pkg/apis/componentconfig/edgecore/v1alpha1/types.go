@@ -105,6 +105,8 @@ type Modules struct {
 	// EdgeStream indicates edgestream module config
 	// +Required
 	EdgeStream *EdgeStream `json:"edgeStream,omitempty"`
+	// EnvoyControPlane indicates envoycontrolplane module config
+	EnvoyControlPlane *EnvoyControlPlaneConfig `json:"envoyControlPlane,omitempty"`
 }
 
 // Edged indicates the config fo edged module
