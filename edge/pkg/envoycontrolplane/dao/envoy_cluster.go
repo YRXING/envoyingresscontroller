@@ -29,6 +29,12 @@ func UpdateCluster(cluster *Cluster) error  {
 	return err
 }
 
+func InsertOrUpdateCluster(cluster *Cluster) error {
+	_,err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)",cluster.Name,cluster.Value).Exec()
+	klog.V(4).Infof("update result %v",err)
+	return err
+}
+
 //update special field
 func UpdateClusterField(name string,col string,value interface{}) error{
 	num,err := dbm.DBAccess.QueryTable(ClusterTableName).Filter("name",name).Update(map[string]interface{}{col:value})

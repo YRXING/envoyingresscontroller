@@ -29,6 +29,12 @@ func UpdateSecret(secret *Secret) error  {
 	return err
 }
 
+func InsertOrUpdateSecret(secret *Secret) error {
+	_,err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)",secret.Name,secret.Value).Exec()
+	klog.V(4).Infof("update result %v",err)
+	return err
+}
+
 //update special field
 func UpdateSecretField(name string,col string,value interface{}) error{
 	num,err := dbm.DBAccess.QueryTable(SecretTableName).Filter("name",name).Update(map[string]interface{}{col:value})

@@ -2,7 +2,9 @@ package envoycontrolplane
 
 import (
 	"github.com/kubeedge/beehive/pkg/core"
+	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
+	"k8s.io/klog/v2"
 )
 const(
 	EnvoyCpntrolPlane = "envoyControlPlane"
@@ -26,13 +28,22 @@ func (*envoyControlPlane) Name() string{
 }
 
 func (*envoyControlPlane) Group() string{
-	return ""
+	return "controlplane"
 }
 
-func (m *envoyControlPlane) Enable() bool {
-	return m.enable
+func (e *envoyControlPlane) Enable() bool {
+	return e.enable
 }
 
-func (m *envoyControlPlane) Start(){
-
+func (e *envoyControlPlane) Start(){
+	go func() {
+		for{
+			select {
+			case <-beehiveContext.Done():
+				klog.Warning("envoyControlPlane stop")
+				return
+			}
+		}
+	}()
+	e.runEnvoyControlPlane()
 }

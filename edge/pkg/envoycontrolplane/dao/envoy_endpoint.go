@@ -29,6 +29,12 @@ func UpdateEndpoint(endpoint *Endpoint) error  {
 	return err
 }
 
+func InsertOrUpdateEndpoint(endpoint *Endpoint) error {
+	_,err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)",endpoint.Name,endpoint.Value).Exec()
+	klog.V(4).Infof("update result %v",err)
+	return err
+}
+
 //update special field
 func UpdateEndpointField(name string,col string,value interface{}) error{
 	num,err := dbm.DBAccess.QueryTable(EndpointTableName).Filter("name",name).Update(map[string]interface{}{col:value})

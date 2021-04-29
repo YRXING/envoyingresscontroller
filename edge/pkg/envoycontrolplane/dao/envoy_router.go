@@ -29,6 +29,12 @@ func UpdateRouter(router *Router) error  {
 	return err
 }
 
+func InsertOrUpdateRouter(router *Router) error {
+	_,err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)",router.Name,router.Value).Exec()
+	klog.V(4).Infof("update result %v",err)
+	return err
+}
+
 //update special field
 func UpdateRouterField(name string,col string,value interface{}) error{
 	num,err := dbm.DBAccess.QueryTable(RouterTableName).Filter("name",name).Update(map[string]interface{}{col:value})

@@ -92,7 +92,67 @@ func (e *envoyControlPlane) processUpdate(message model.Message)  {
 	if err != nil {
 		klog.Errorf("insert message failed, %s",msgDebugInfo(&message))
 	}
-	
+	resKey,_,_ := parseResource(message.GetResource())
+
+	cluster := &dao.Cluster{
+		Name: resKey,
+		Value: string(content),
+	}
+
+	err = dao.InsertOrUpdateCluster(cluster)
+	if err != nil{
+		klog.Errorf("save meta failed, %s: %v",msgDebugInfo(&message),err)
+		//TODO: feedback error
+		return
+	}
 }
 
+func (e *envoyControlPlane) processDelete(message model.Message){
+	resKey,_,_ := parseResource(message.GetResource())
+	err := dao.DeleteClusterByName(resKey)
+	if err != nil {
+		klog.Errorf("delete cluster failed,%s",msgDebugInfo(&message))
+		//TODO: feedbackerror
+		return
+	}
+}
 
+func (e *envoyControlPlane) processQuery(message model.Message) *[]dao.Cluster{
+	resKey,_,_ := parseResource(message.GetResource())
+
+	clusters,err:= dao.QueryCluster("Name",resKey)
+	if err != nil{
+		klog.Errorf("query cluster failed, %s",msgDebugInfo(&message))
+	}
+	return clusters
+}
+
+func (e *envoyControlPlane) process(message model.Message)  {
+	operation := message.GetOperation()
+	switch operation {
+	case model.InsertOperation:
+		e.processInsert(message)
+	case model.UpdateOperation:
+		e.processUpdate(message)
+	case model.DeleteOperation:
+		e.processDelete(message)
+	}
+}
+
+func (e *envoyControlPlane) runEnvoyControlPlane(){
+	go func() {
+		for{
+			select {
+			case <-beehiveContext.Done():
+				klog.Warning("EnvoyControlPlane mainloop stop")
+				return
+			}
+			if msg,err := beehiveContext.Receive(e.Name());err != nil {
+				klog.V(2).Infof("get a message %+v",msg)
+				e.process(msg)
+			}else {
+				klog.Errorf("get a message %+v: %v",msg,err)
+			}
+		}
+	}()
+}

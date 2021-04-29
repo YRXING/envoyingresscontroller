@@ -29,6 +29,12 @@ func UpdateListener(listener *Listener) error  {
 	return err
 }
 
+func InsertOrUpdateListener(listener *Listener) error {
+	_,err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)",listener.Name,listener.Value).Exec()
+	klog.V(4).Infof("update result %v",err)
+	return err
+}
+
 //update special field
 func UpdateListenerField(name string,col string,value interface{}) error{
 	num,err := dbm.DBAccess.QueryTable(ListenerTableName).Filter("name",name).Update(map[string]interface{}{col:value})
