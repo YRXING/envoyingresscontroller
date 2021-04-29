@@ -1,5 +1,9 @@
 无侵入式添加envoyingresscontroller Module ，路径: cloud/pkg/envoyingresscontroller
 
+### 整体架构
+
+![未命名文件](https://tva1.sinaimg.cn/large/008i3skNly1gpybwdl7r5j30oc0swmyg.jpg)
+
 ### 组件功能
 
 将边缘服务通过域名对外暴露出去，实现边边或边云服务在七层互访。
