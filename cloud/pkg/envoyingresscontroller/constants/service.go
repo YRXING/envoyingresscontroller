@@ -10,7 +10,7 @@ const (
 	ResourceNode = "node"
 
 	// Group
-	GroupResource = "resource"
+	EnvoyGroup = "envoy"
 
 	//ResourceType
 	ResourceTypeConfigMapList = "configmaplist"

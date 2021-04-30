@@ -8,6 +8,7 @@ import (
 )
 const(
 	EnvoyCpntrolPlane = "envoyControlPlane"
+	EnvoyGroupName	  = "envoy"
 )
 
 type envoyControlPlane struct {
@@ -28,7 +29,7 @@ func (*envoyControlPlane) Name() string{
 }
 
 func (*envoyControlPlane) Group() string{
-	return "controlplane"
+	return EnvoyGroupName
 }
 
 func (e *envoyControlPlane) Enable() bool {

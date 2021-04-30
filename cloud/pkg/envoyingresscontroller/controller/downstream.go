@@ -89,7 +89,7 @@ func (dc *DownstreamController) syncConfigMap(){
 					klog.Warningf("build message resource failed with err: %s",err)
 					continue
 				}
-				msg.BuildRouter(modules.EnvoyIngressControllerModuleName, constants.GroupResource,resource,operation)
+				msg.BuildRouter(modules.EnvoyIngressControllerModuleName, constants.EnvoyGroup,resource,operation)
 				msg.Content = configMap
 				err = dc.messageLayer.Send(*msg)
 				if err != nil{
@@ -131,7 +131,7 @@ func (dc *DownstreamController) syncEdgeNodes() {
 					}
 
 					//send all configmaps related to envoy to edge
-					msg := model.NewMessage("").SetRoute(modules.EnvoyIngressControllerModuleName,constants.GroupResource)
+					msg := model.NewMessage("").SetRoute(modules.EnvoyIngressControllerModuleName,constants.EnvoyGroup)
 					resource ,err := messagelayer.BuildResource(node.Name,constants.EnvoyNamespace,constants.ResourceTypeConfigMapList,constants.ResourceTypeConfigMap)
 					if err != nil{
 						klog.Warningf("Built message resource failed with error: %s",err)
