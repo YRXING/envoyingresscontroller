@@ -7,17 +7,16 @@ import (
 )
 
 const (
-	ClusterTableName = "cluster"
+	ClusterTableName  = "cluster"
 	EndpointTableName = "endpoint"
 	ListenerTableName = "listener"
-	RouterTableName = "router"
-	SecretTableName = "secret"
+	RouterTableName   = "router"
+	SecretTableName   = "secret"
 )
 
-
 //InitDBTable create table
-func InitDBTable(module core.Module){
-	klog.Infof("Begin to register %v db model",module.Name())
+func InitDBTable(module core.Module) {
+	klog.Infof("Begin to register %v db model", module.Name())
 
 	if !module.Enable() {
 		klog.Infof("Module %s is disabled, DB meta for it will not be registered", module.Name())

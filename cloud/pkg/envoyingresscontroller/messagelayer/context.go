@@ -1,11 +1,11 @@
 package messagelayer
 
 import (
-	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config"
 	"strings"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config"
 	"github.com/kubeedge/kubeedge/common/constants"
 )
 

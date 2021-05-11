@@ -43,6 +43,7 @@ func ValidateCloudCoreConfiguration(c *v1alpha1.CloudCoreConfig) field.ErrorList
 	allErrs = append(allErrs, ValidateModuleDynamicController(*c.Modules.DynamicController)...)
 	allErrs = append(allErrs, ValidateLeaderElectionConfiguration(*c.LeaderElection)...)
 	allErrs = append(allErrs, ValidateModuleCloudStream(*c.Modules.CloudStream)...)
+	allErrs = append(allErrs, ValidateModuleEnvoyIngressController(*c.Modules.EnvoyIngressController)...)
 	return allErrs
 }
 
@@ -193,5 +194,13 @@ func ValidateKubeAPIConfig(k v1alpha1.KubeAPIConfig) field.ErrorList {
 	if k.KubeConfig != "" && !utilvalidation.FileIsExist(k.KubeConfig) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("kubeconfig"), k.KubeConfig, "kubeconfig not exist"))
 	}
+	return allErrs
+}
+
+func ValidateModuleEnvoyIngressController(eic v1alpha1.EnvoyIngressController) field.ErrorList {
+	if !eic.Enable {
+		return field.ErrorList{}
+	}
+	allErrs := field.ErrorList{}
 	return allErrs
 }

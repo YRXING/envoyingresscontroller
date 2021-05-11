@@ -3,8 +3,9 @@ package app
 import (
 	"errors"
 	"fmt"
-	"github.com/kubeedge/kubeedge/edge/pkg/envoycontrolplane"
 	"os"
+
+	"github.com/kubeedge/kubeedge/edge/pkg/envoycontrolplane"
 
 	"github.com/mitchellh/go-ps"
 	"github.com/spf13/cobra"

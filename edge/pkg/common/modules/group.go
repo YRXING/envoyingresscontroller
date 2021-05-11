@@ -17,6 +17,6 @@ const (
 	MeshGroup = "mesh"
 	// StreamGroup group
 	StreamGroup = "edgestream"
-	//EnvoyGroup group
-	EnvoyGroup = "envoy"
+	//EnvoyControlPlaneGroup group
+	EnvoyControlPlaneGroup = "envoy"
 )
