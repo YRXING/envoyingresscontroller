@@ -38,7 +38,7 @@ const (
 	Ignore              = "ignore"
 )
 
-type  applicationStatus string
+type applicationStatus string
 
 const (
 	// set by agent

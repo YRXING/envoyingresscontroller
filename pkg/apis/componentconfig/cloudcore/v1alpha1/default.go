@@ -162,6 +162,18 @@ func NewDefaultCloudCoreConfig() *CloudCoreConfig {
 				Port:        9443,
 				RestTimeout: 60,
 			},
+			EnvoyIngressController: &EnvoyIngressController{
+				Enable:                       true,
+				SyncInterval:                 1,
+				EnvoyServiceSyncInterval:     1,
+				IngressSyncWorkerNumber:      5,
+				EnvoyServiceSyncWorkerNumber: 10,
+				Context: &ControllerContext{
+					SendModule:     metaconfig.ModuleNameCloudHub,
+					ReceiveModule:  metaconfig.ModuleNameEnvoyIngressController,
+					ResponseModule: metaconfig.ModuleNameCloudHub,
+				},
+			},
 		},
 		LeaderElection: &componentbaseconfig.LeaderElectionConfiguration{
 			LeaderElect:       false,

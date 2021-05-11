@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -22,6 +21,7 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller"
 	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller"
 	"github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller"
 	kele "github.com/kubeedge/kubeedge/cloud/pkg/leaderelection"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router"
 	"github.com/kubeedge/kubeedge/cloud/pkg/synccontroller"

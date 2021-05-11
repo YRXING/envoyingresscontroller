@@ -46,12 +46,14 @@ require (
 	github.com/pkg/errors v0.9.1
 	github.com/sailorvii/modbus v0.1.2
 	github.com/shirou/gopsutil v2.20.9+incompatible
+	github.com/sirupsen/logrus v1.6.0
 	github.com/spf13/cobra v1.0.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.5.1
 	github.com/vishvananda/netlink v1.1.0
 	golang.org/x/net v0.0.0-20200707034311-ab3426394381
 	google.golang.org/grpc v1.27.0
+	google.golang.org/protobuf v1.24.0
 	gopkg.in/yaml.v2 v2.2.8
 	k8s.io/api v0.19.3
 	k8s.io/apiextensions-apiserver v0.19.3

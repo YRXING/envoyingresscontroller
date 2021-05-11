@@ -16,7 +16,7 @@ const (
 	DynamicControllerModuleName  = "dynamiccontroller"
 	DynamicControllerModuleGroup = "dynamiccontroller"
 
-	EnvoyIngressControllerModuleName = "envoyingresscontroller"
+	EnvoyIngressControllerModuleName  = "envoyingresscontroller"
 	EnvoyIngressControllerModuleGroup = "envoyingresscontroller"
 
 	CloudStreamModuleName = "cloudStream"

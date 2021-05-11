@@ -13,4 +13,6 @@ const (
 	EdgeStreamModuleName = "edgestream"
 	// DeviceTwinModuleName name
 	DeviceTwinModuleName = "twin"
+	// EnvoyControlPlaneName name
+	EnvoyControlPlaneName = "envoycontrolplane"
 )

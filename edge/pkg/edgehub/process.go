@@ -53,8 +53,6 @@ func (eh *EdgeHub) dispatch(message model.Message) error {
 		md = modules.MetaGroup
 	case messagepkg.UserGroupName:
 		md = modules.BusGroup
-	case messagepkg.EnvoyGroupName:
-		md = modules.EnvoyGroup
 	default:
 		klog.Warningf("msg_group not found")
 		return fmt.Errorf("msg_group not found")
