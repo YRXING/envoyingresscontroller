@@ -88,7 +88,11 @@ func TestContextMessageLayer_Send_Receive_Response(t *testing.T) {
 				t.Errorf("ContextMessageLayer.Receive() failed. got: %v, want:%v", got, tt.args.message)
 			}
 
-			cml.Response(got)
+			err = cml.Response(got)
+			if err != nil {
+				t.Errorf("ContextMessageLayer.Response() failed. err: %v", err)
+				return
+			}
 		})
 	}
 }

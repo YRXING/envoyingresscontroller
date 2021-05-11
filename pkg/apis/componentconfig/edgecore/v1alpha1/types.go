@@ -395,9 +395,15 @@ type MetaManager struct {
 type EnvoyControlPlaneConfig struct {
 	Enable bool `json:"enable,omitempty"`
 	// ContextSendGroup indicates send group
-	ContextSendGroup string `json:"contextSendGroup,omitempty"`
+	//ContextSendGroup string `json:"contextSendGroup,omitempty"`
 	// ContextSendModule indicates send module
-	ContextSendModule string `json:"contextSendModule,omitempty"`
+	//ContextSendModule string `json:"contextSendModule,omitempty"`
+	// XdsAddr indicates the address that envoy control plane will work on
+	XdsAddr string `json:"xdsAddr,omitempty"`
+	// XdsPort indicates the xdsPort that envoy control plane will work on
+	XdsPort int `json:"xdsPort,omitempty"`
+	// NodeName indicates the name of the envoy node
+	NodeName string `json:"nodeName,omitempty"`
 }
 
 type MetaServer struct {

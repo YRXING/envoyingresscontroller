@@ -41,6 +41,7 @@ func ValidateEdgeCoreConfiguration(c *v1alpha1.EdgeCoreConfig) field.ErrorList {
 	allErrs = append(allErrs, ValidateModuleDBTest(*c.Modules.DBTest)...)
 	allErrs = append(allErrs, ValidateModuleEdgeMesh(*c.Modules.EdgeMesh)...)
 	allErrs = append(allErrs, ValidateModuleEdgeStream(*c.Modules.EdgeStream)...)
+	allErrs = append(allErrs, ValidateModuleEnvoyControlPlane(*c.Modules.EnvoyControlPlane)...)
 	return allErrs
 }
 
@@ -155,6 +156,24 @@ func ValidateModuleEdgeStream(m v1alpha1.EdgeStream) field.ErrorList {
 	allErrs := field.ErrorList{}
 	if !m.Enable {
 		return allErrs
+	}
+	return allErrs
+}
+
+func ValidateModuleEnvoyControlPlane(m v1alpha1.EnvoyControlPlaneConfig) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if !m.Enable {
+		return allErrs
+	}
+	if m.XdsPort >= 0 && m.XdsPort <= 65535 {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("XdsPort"),
+			m.XdsAddr, "XdsPort must be a number within 0 and 65535"))
+	}
+	validAddress := utilvalidation.IsValidIP(m.XdsAddr)
+	if len(validAddress) > 0 {
+		for _, v := range validAddress {
+			allErrs = append(allErrs, field.Invalid(field.NewPath("Address"), m.XdsAddr, v))
+		}
 	}
 	return allErrs
 }
