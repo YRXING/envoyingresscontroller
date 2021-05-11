@@ -165,7 +165,7 @@ func ValidateModuleEnvoyControlPlane(m v1alpha1.EnvoyControlPlaneConfig) field.E
 	if !m.Enable {
 		return allErrs
 	}
-	if m.XdsPort >= 0 && m.XdsPort <= 65535 {
+	if !(m.XdsPort >= 0 && m.XdsPort <= 65535) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("XdsPort"),
 			m.XdsAddr, "XdsPort must be a number within 0 and 65535"))
 	}

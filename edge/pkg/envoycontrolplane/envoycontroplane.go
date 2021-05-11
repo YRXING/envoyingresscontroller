@@ -63,12 +63,22 @@ type envoyControlPlane struct {
 	version           int
 }
 
-func newControlPlane(enable bool) *envoyControlPlane {
-	return &envoyControlPlane{enable: enable}
+func newControlPlane(enable bool, xdsAddr, xdsPort, nodeName string) *envoyControlPlane {
+	return &envoyControlPlane{
+		enable:         enable,
+		xdsAddr:        xdsAddr,
+		xdsPort:        xdsPort,
+		nodeName:       nodeName,
+		envoySecrets:   make(map[string]*EnvoySecret),
+		envoyEndpoints: make(map[string]*EnvoyEndpoint),
+		envoyClusters:  make(map[string]*EnvoyCluster),
+		envoyRoutes:    make(map[string]*EnvoyRoute),
+		envoyListeners: make(map[string]*EnvoyListener),
+	}
 }
 
 func Register(ecpc *v1alpha1.EnvoyControlPlaneConfig) {
-	controlplane := newControlPlane(ecpc.Enable)
+	controlplane := newControlPlane(ecpc.Enable, ecpc.XdsAddr, fmt.Sprintf("%d", ecpc.XdsPort), ecpc.NodeName)
 	core.Register(controlplane)
 }
 
@@ -95,7 +105,7 @@ func (e *envoyControlPlane) Start() {
 			}
 		}
 	}()
-	e.runEnvoyControlPlane()
+	go e.runEnvoyControlPlane()
 	// flush xdscache every minute
 	go wait.Until(e.FlushXDSCache, 60, beehiveContext.Done())
 	err := e.StartGrpcServer(taskCtx)
