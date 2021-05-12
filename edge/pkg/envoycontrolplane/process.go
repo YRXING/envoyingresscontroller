@@ -40,10 +40,9 @@ func parseResource(resource string) (string, string, string) {
 	switch len(tokens) {
 	case 2:
 		resType = tokens[len(tokens)-1]
-	case 3:
+	default:
 		resType = tokens[len(tokens)-2]
 		resID = tokens[len(tokens)-1]
-	default:
 	}
 	return resource, resType, resID
 }
@@ -65,7 +64,7 @@ func generateContent(message model.Message) ([]byte, error) {
 	return content, err
 }
 
-func (e *envoyControlPlane) processInsert(message model.Message) {
+func (e *envoyControlPlane) processInsert(message model.Message) error {
 	content, err := generateContent(message)
 	if err != nil {
 		klog.Errorf("insert message failed, %s", msgDebugInfo(&message))
@@ -84,13 +83,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 		e.envoySecrets[envoySecret.Name] = envoySecret
 		e.envoySecretLock.Unlock()
 		secret := &dao.Secret{
+			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
 		}
 		err = dao.InsertOrUpdateSecret(secret)
 		if err != nil {
 			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return
+			return err
 		}
 	case string(ENDPOINT):
 		var envoyEndpoint = &EnvoyEndpoint{}
@@ -102,13 +102,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 		e.envoyEndpoints[envoyEndpoint.Name] = envoyEndpoint
 		e.envoyEndpointLock.Unlock()
 		endpoint := &dao.Endpoint{
+			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
 		}
 		err = dao.InsertOrUpdateEndpoint(endpoint)
 		if err != nil {
 			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return
+			return err
 		}
 	case string(CLUSTER):
 		var envoyCluster = &EnvoyCluster{}
@@ -120,13 +121,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 		e.envoyClusters[envoyCluster.Name] = envoyCluster
 		e.envoyClusterLock.Unlock()
 		cluster := &dao.Cluster{
+			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
 		}
 		err = dao.InsertOrUpdateCluster(cluster)
 		if err != nil {
 			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return
+			return err
 		}
 	case string(ROUTE):
 		var envoyRoute = &EnvoyRoute{}
@@ -138,13 +140,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 		e.envoyRoutes[envoyRoute.Name] = envoyRoute
 		e.envoyRouteLock.Unlock()
 		route := &dao.Router{
+			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
 		}
 		err = dao.InsertOrUpdateRouter(route)
 		if err != nil {
 			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return
+			return err
 		}
 	case string(LISTENER):
 		var envoyListener = &EnvoyListener{}
@@ -156,15 +159,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 		e.envoyListeners[envoyListener.Name] = envoyListener
 		e.envoyListenerLock.Unlock()
 		listener := &dao.Listener{
+			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
 		}
 		err = dao.InsertOrUpdateListener(listener)
 		if err != nil {
 			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return
+			return err
 		}
 	}
+	return nil
 }
 
 func (e *envoyControlPlane) processDelete(message model.Message) {

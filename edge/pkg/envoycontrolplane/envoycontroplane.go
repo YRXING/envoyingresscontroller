@@ -19,6 +19,8 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/kubeedge/kubeedge/edge/pkg/envoycontrolplane/dao"
+
 	"k8s.io/apimachinery/pkg/util/wait"
 
 	envoy_types "github.com/envoyproxy/go-control-plane/pkg/cache/types"
@@ -105,6 +107,8 @@ func (e *envoyControlPlane) Start() {
 			}
 		}
 	}()
+	// register db table
+	dao.InitDBTable(e)
 	go e.runEnvoyControlPlane()
 	// flush xdscache every minute
 	go wait.Until(e.FlushXDSCache, 60, beehiveContext.Done())
