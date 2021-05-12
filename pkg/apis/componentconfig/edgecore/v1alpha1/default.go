@@ -167,6 +167,12 @@ func NewDefaultEdgeCoreConfig() *EdgeCoreConfig {
 				TunnelServer:            net.JoinHostPort("127.0.0.1", strconv.Itoa(constants.DefaultTunnelPort)),
 				WriteDeadline:           15,
 			},
+			EnvoyControlPlane: &EnvoyControlPlaneConfig{
+				Enable:   true,
+				XdsAddr:  "127.0.0.1",
+				XdsPort:  9701,
+				NodeName: "envoynode",
+			},
 		},
 	}
 }

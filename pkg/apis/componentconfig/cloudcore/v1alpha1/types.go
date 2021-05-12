@@ -81,7 +81,7 @@ type Modules struct {
 }
 
 // EnvoyIngressController indicates the config of envoy ingress controller module
-// EnvoyIngressController is a ingress controller which is reponsible for  translate ingress into
+// EnvoyIngressController is a ingress controller which is responsible for  translate ingress into
 // envoy objects.
 type EnvoyIngressController struct {
 	Enable                   bool          `json:"enable,omitempty"`
@@ -89,7 +89,7 @@ type EnvoyIngressController struct {
 	EnvoyServiceSyncInterval time.Duration `json:"envoyServiceSyncInterval,omitempty"`
 	//envoy related fields
 	IngressSyncWorkerNumber      int `json:"ingressSyncWorkerNumber,omitempty"`
-	EnvoyServiceSyncWorkerNumber int `json"envoyServiceSyncWorkerNumber,omitempty"`
+	EnvoyServiceSyncWorkerNumber int `json:"envoyServiceSyncWorkerNumber,omitempty"`
 	// Context indicates send,receive,response modules for envoyIngressController module
 	Context *ControllerContext `json:"context,omitempty"`
 }

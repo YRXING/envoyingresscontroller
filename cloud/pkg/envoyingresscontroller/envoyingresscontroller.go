@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //@CHANGELOG The HarmonyCloud Authors:
-// Thanks to the contour project authors. We have used their envoy related functions to write this controlller.
+// Thanks to the contour project authors. We have used their envoy related functions to write this controller.
 
 package envoyingresscontroller
 
@@ -150,6 +150,7 @@ const (
 )
 
 // TODO: need to add a method for sending all resources to a given node
+// TODO: use RWMutex's rlock() runlock() in read situations
 
 type HTTPVersionType = http.HttpConnectionManager_CodecType
 
@@ -163,8 +164,8 @@ type KubeedgeClient struct {
 	Destination string
 }
 
-//EnvoyIngressControllerConfiguration's field affects how controller works
-type EnvoyIngressControllerConfiguration struct {
+//EICConfiguration's field affects how controller works
+type EICConfiguration struct {
 	syncInterval             time.Duration
 	envoyServiceSyncInterval time.Duration
 	//envoy related fields
@@ -265,7 +266,7 @@ func (rc *RegexMatchCondition) String() string {
 type EnvoySecret struct {
 	Name            string      `json:"name,omitempty"`
 	Namespace       string      `json:"namespace,omitempty"`
-	ResourceVersion string      `json:"resourceVersion",omitempty`
+	ResourceVersion string      `json:"resourceVersion,omitempty"`
 	NodeGroup       []NodeGroup `json:"-"`
 	Secret          envoy_tls_v3.Secret
 }
@@ -273,7 +274,7 @@ type EnvoySecret struct {
 type EnvoyEndpoint struct {
 	Name                  string      `json:"name,omitempty"`
 	Namespace             string      `json:"namespace,omitempty"`
-	ResourceVersion       string      `json:"resourceVersion",omitempty`
+	ResourceVersion       string      `json:"resourceVersion,omitempty"`
 	NodeGroup             []NodeGroup `json:"-"`
 	ClusterLoadAssignment envoy_endpoint_v3.ClusterLoadAssignment
 }
@@ -281,7 +282,7 @@ type EnvoyEndpoint struct {
 type EnvoyCluster struct {
 	Name            string      `json:"name,omitempty"`
 	Namespace       string      `json:"namespace,omitempty"`
-	ResourceVersion string      `json:"resourceVersion",omitempty`
+	ResourceVersion string      `json:"resourceVersion,omitempty"`
 	NodeGroup       []NodeGroup `json:"-"`
 	Cluster         envoy_cluster_v3.Cluster
 }
@@ -289,7 +290,7 @@ type EnvoyCluster struct {
 type EnvoyRoute struct {
 	Name               string      `json:"name,omitempty"`
 	Namespace          string      `json:"namespace,omitempty"`
-	ResourceVersion    string      `json:"resourceVersion",omitempty`
+	ResourceVersion    string      `json:"resourceVersion,omitempty"`
 	NodeGroup          []NodeGroup `json:"-"`
 	RouteConfiguration envoy_route_v3.RouteConfiguration
 }
@@ -297,7 +298,7 @@ type EnvoyRoute struct {
 type EnvoyListener struct {
 	Name            string      `json:"name,omitempty"`
 	Namespace       string      `json:"namespace,omitempty"`
-	ResourceVersion string      `json:"resourceVersion",omitempty`
+	ResourceVersion string      `json:"resourceVersion,omitempty"`
 	NodeGroup       []NodeGroup `json:"-"`
 	Listener        envoy_listener_v3.Listener
 }
@@ -324,7 +325,7 @@ type EnvoyIngressController struct {
 	kubeClient     clientset.Interface
 	kubeedgeClient KubeedgeClient
 
-	envoyIngressControllerConfiguration EnvoyIngressControllerConfiguration
+	envoyIngressControllerConfiguration EICConfiguration
 
 	eventRecorder record.EventRecorder
 
@@ -334,7 +335,7 @@ type EnvoyIngressController struct {
 	// node2group saves the 1 to n relationship of a node's groups
 	// So a node can join not only one node group
 	// Because the label in k8s is map[string]string, the nodegroup label can only contain one string.
-	// In case a node belongs to more than one group, the groups should be seperated by ; signal.
+	// In case a node belongs to more than one group, the groups should be separated by ; signal.
 	// For example, node A belongs to nodegroup x and y, and its nodegroup label can be in the format: nodegroup: a;b
 	node2group map[string][]NodeGroup
 	//group2node save2 the 1 to n relationship of a group's node members
@@ -372,19 +373,19 @@ type EnvoyIngressController struct {
 	// Added as a member to the struct to allow injection for testing.
 	secretStoreSynced cache.InformerSynced
 	// secretStore saves all the converted envoy secrets in it
-	secretStore     map[string]EnvoySecret
+	secretStore     map[string]*EnvoySecret
 	secretStoreLock sync.RWMutex
 	// endpointStore saves all the converted envoy endpoints in it
-	endpointStore     map[string]EnvoyEndpoint
+	endpointStore     map[string]*EnvoyEndpoint
 	endpointStoreLock sync.RWMutex
 	// clusterStore saves all the converted envoy clusters in it
-	clusterStore     map[string]EnvoyCluster
+	clusterStore     map[string]*EnvoyCluster
 	clusterStoreLock sync.RWMutex
 	// routeStore saves all the converted envoy route object in it
-	routeStore     map[string]EnvoyRoute
+	routeStore     map[string]*EnvoyRoute
 	routeStoreLock sync.RWMutex
 	// listener saves all the converted envoy listener object in it
-	listenerStore     map[string]EnvoyListener
+	listenerStore     map[string]*EnvoyListener
 	listenerStoreLock sync.RWMutex
 	// resourceNeedToBeSentToEdgeStore saves all the converted envoy objects
 	// which needed to be sent to edge
@@ -406,11 +407,11 @@ type EnvoyIngressController struct {
 func initializeFields(eic *EnvoyIngressController) {
 	eic.node2group = make(map[string][]NodeGroup)
 	eic.group2node = make(map[NodeGroup][]string)
-	eic.secretStore = make(map[string]EnvoySecret)
-	eic.endpointStore = make(map[string]EnvoyEndpoint)
-	eic.clusterStore = make(map[string]EnvoyCluster)
-	eic.routeStore = make(map[string]EnvoyRoute)
-	eic.listenerStore = make(map[string]EnvoyListener)
+	eic.secretStore = make(map[string]*EnvoySecret)
+	eic.endpointStore = make(map[string]*EnvoyEndpoint)
+	eic.clusterStore = make(map[string]*EnvoyCluster)
+	eic.routeStore = make(map[string]*EnvoyRoute)
+	eic.listenerStore = make(map[string]*EnvoyListener)
 	eic.ingressToResourceNameStore = make(map[string][]EnvoyResource)
 	eic.ingressNodeGroupStore = make(map[string][]NodeGroup)
 }
@@ -423,7 +424,7 @@ func NewEnvoyIngressController(
 	v1beta1IngressInformer v1beta1networkInformers.IngressInformer,
 	nodeInformer coreinformers.NodeInformer,
 	serviceInformer coreinformers.ServiceInformer,
-	envoyIngressControllerConfiguration EnvoyIngressControllerConfiguration,
+	envoyIngressControllerConfiguration EICConfiguration,
 	kubeCLient clientset.Interface,
 	enable bool,
 ) (*EnvoyIngressController, error) {
@@ -513,7 +514,7 @@ func Register(eic *v1alpha1.EnvoyIngressController) {
 	v1beta1IngressInformer := sharedInformers.Networking().V1beta1().Ingresses()
 	nodeInformer := sharedInformers.Core().V1().Nodes()
 	serviceInformer := sharedInformers.Core().V1().Services()
-	envoyIngressControllerConfiguration := EnvoyIngressControllerConfiguration{
+	envoyIngressControllerConfiguration := EICConfiguration{
 		syncInterval:                 eic.SyncInterval,
 		envoyServiceSyncInterval:     eic.EnvoyServiceSyncInterval,
 		ingressSyncWorkerNumber:      eic.IngressSyncWorkerNumber,
@@ -553,7 +554,7 @@ func (eic *EnvoyIngressController) addIngress(obj interface{}) {
 	}
 	key, err := controller.KeyFunc(ingress)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", ingress, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", ingress, err))
 		return
 	}
 	nodegroup := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
@@ -642,7 +643,6 @@ func (eic *EnvoyIngressController) deleteV1beta1Ingress(obj interface{}) {
 }
 
 func toV1Ingress(obj *v1beta1Ingressv1.Ingress) *ingressv1.Ingress {
-
 	if obj == nil {
 		return nil
 	}
@@ -659,7 +659,6 @@ func toV1Ingress(obj *v1beta1Ingressv1.Ingress) *ingressv1.Ingress {
 	}
 
 	for _, r := range obj.Spec.Rules {
-
 		rule := ingressv1.IngressRule{}
 
 		if r.Host != "" {
@@ -798,7 +797,7 @@ func (eic *EnvoyIngressController) deleteNode(obj interface{}) {
 			if len(v) != 0 {
 				nodeGroup := NodeGroup(v)
 				if _, ok = eic.group2node[nodeGroup]; ok {
-					nodeList := []string{}
+					var nodeList = make([]string, 0, 10)
 					for _, nodeName := range eic.group2node[nodeGroup] {
 						if nodeName == node.Name {
 							continue
@@ -835,7 +834,6 @@ func (eic *EnvoyIngressController) updateService(old, cur interface{}) {
 		klog.V(4).Infof("service %v's selector has changed", oldService.Name)
 		eic.deleteService(oldService)
 		eic.addService(curService)
-
 	}
 }
 
@@ -949,7 +947,7 @@ func (eic *EnvoyIngressController) deleteSecret(obj interface{}) {
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
-			utilruntime.HandleError(fmt.Errorf("Couldn't get object from tombstone %#v", obj))
+			utilruntime.HandleError(fmt.Errorf("couldn't get object from tombstone %#v", obj))
 			return
 		}
 		secret, ok = tombstone.Obj.(*v1.Secret)
@@ -986,7 +984,7 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 
 	err := eic.initiateNodeGroupsWithNodes()
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Fail to initiate nodegroup and node relation"))
+		utilruntime.HandleError(fmt.Errorf("fail to initiate nodegroup and node relation"))
 		return
 	}
 
@@ -994,7 +992,7 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 
 	err = eic.initiateEnvoyResources()
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Fail to initiate envoy resources"))
+		utilruntime.HandleError(fmt.Errorf("fail to initiate envoy resources"))
 		return
 	}
 
@@ -1047,7 +1045,7 @@ func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
 	}
 	key, err := controller.KeyFunc(ingress)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %#v: %v", ingress, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", ingress, err))
 		return
 	}
 
@@ -1057,7 +1055,7 @@ func (eic *EnvoyIngressController) enqueue(ingress *ingressv1.Ingress) {
 func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {
 	ingress, ok := obj.(*ingressv1.Ingress)
 	if !ok {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't convert obj into ingress, obj:%#v", obj))
+		utilruntime.HandleError(fmt.Errorf("cloudn't convert obj into ingress, obj:%#v", obj))
 	}
 	if ingress.Annotations[INGRESSCLASSANNOTATION] != ENVOYINGRESSCONTROLLERNAME {
 		return
@@ -1065,7 +1063,7 @@ func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, aft
 
 	key, err := controller.KeyFunc(obj)
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", obj, err))
+		utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", obj, err))
 		return
 	}
 
@@ -1110,7 +1108,7 @@ func (eic *EnvoyIngressController) getServicesForPod(pod *v1.Pod) []*v1.Service 
 
 	list, err := eic.serviceLister.Services(pod.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Failed to list all the services in cluster for pod: %v", pod.Name))
+		utilruntime.HandleError(fmt.Errorf("failed to list all the services in cluster for pod: %v", pod.Name))
 		return nil
 	}
 
@@ -1122,7 +1120,7 @@ func (eic *EnvoyIngressController) getServicesForPod(pod *v1.Pod) []*v1.Service 
 		}
 		err = metav1.Convert_Map_string_To_string_To_v1_LabelSelector(&service.Spec.Selector, labelSelector, nil)
 		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("Failed to convert service %v's selector into label selector", service.Name))
+			utilruntime.HandleError(fmt.Errorf("failed to convert service %v's selector into label selector", service.Name))
 			return nil
 		}
 		selector, err = metav1.LabelSelectorAsSelector(labelSelector)
@@ -1156,13 +1154,13 @@ func (eic *EnvoyIngressController) getIngressesForService(service *v1.Service) [
 
 	list, err := eic.ingressLister.Ingresses(service.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get ingresses for service %#v, err: %v", service.Name, err))
+		utilruntime.HandleError(fmt.Errorf("cloudn't get ingresses for service %#v, err: %v", service.Name, err))
 		return nil
 	}
 	// Merge v1beta1 ingresses into v1 ingresses' list
 	tmpList, err := eic.v1beta1IngressLister.Ingresses(service.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get v1beta1 ingresses for service %#v, err: %v", service.Name, err))
+		utilruntime.HandleError(fmt.Errorf("cloudn't get v1beta1 ingresses for service %#v, err: %v", service.Name, err))
 		return nil
 	}
 	for _, v1beta1Ingress := range tmpList {
@@ -1220,7 +1218,7 @@ func (eic *EnvoyIngressController) getServicesForIngress(ingress *ingressv1.Ingr
 	var isServiceMatchIngress bool
 	list, err := eic.serviceLister.Services(ingress.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get services fro ingress:%#v", ingress))
+		utilruntime.HandleError(fmt.Errorf("cloudn't get services fro ingress:%#v", ingress))
 		return nil, err
 	}
 	for _, service := range list {
@@ -1270,14 +1268,14 @@ func (eic *EnvoyIngressController) getIngressesForSecret(secret *v1.Secret) []*i
 
 	list, err := eic.ingressLister.Ingresses(secret.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get ingresses for secret %#v, err: %v", secret.Name, err))
+		utilruntime.HandleError(fmt.Errorf("cloudn't get ingresses for secret %#v, err: %v", secret.Name, err))
 		return nil
 	}
 
 	// Merge v1beta1 ingresses into v1 ingresses' list
 	tmpList, err := eic.v1beta1IngressLister.Ingresses(secret.Namespace).List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get v1beta1 ingresses for service %#v, err: %v", secret.Name, err))
+		utilruntime.HandleError(fmt.Errorf("cloudn't get v1beta1 ingresses for service %#v, err: %v", secret.Name, err))
 		return nil
 	}
 	for _, v1beta1Ingress := range tmpList {
@@ -1314,7 +1312,7 @@ func getNodeGroupForIngress(ingress *ingressv1.Ingress) ([]NodeGroup, error) {
 		}
 	}
 	if len(nodegroup) == 0 {
-		return nil, fmt.Errorf("Ingress %s in namespace %s doesn't have nodegroup annotation", ingress.Name, ingress.Namespace)
+		return nil, fmt.Errorf("ingress %s in namespace %s doesn't have nodegroup annotation", ingress.Name, ingress.Namespace)
 	}
 
 	return nodegroup, nil
@@ -1483,7 +1481,7 @@ func (eic *EnvoyIngressController) getEndpointsForIngress(ingress *ingressv1.Ing
 				ClusterLoadAssignment: envoy_endpoint_v3.ClusterLoadAssignment{
 					ClusterName: service.Name,
 					Endpoints: []*envoy_endpoint_v3.LocalityLbEndpoints{
-						&envoy_endpoint_v3.LocalityLbEndpoints{
+						{
 							LbEndpoints: lbs,
 							LoadBalancingWeight: &wrapperspb.UInt32Value{
 								Value: 1,
@@ -1501,7 +1499,7 @@ func (eic *EnvoyIngressController) getEndpointsForIngress(ingress *ingressv1.Ing
 	}
 
 	if len(clusterLoadAssignments) == 0 {
-		return nil, fmt.Errorf("Cloudn't get clusterLoadAssignment for ingress %v in namespace %v", ingress.Name, ingress.Namespace)
+		return nil, fmt.Errorf("cloudn't get clusterLoadAssignment for ingress %v in namespace %v", ingress.Name, ingress.Namespace)
 	}
 
 	return clusterLoadAssignments, nil
@@ -1689,7 +1687,7 @@ func (eic *EnvoyIngressController) getClustersForIngress(ingress *ingressv1.Ingr
 	}
 
 	if len(clusters) == 0 {
-		return nil, fmt.Errorf("Cloudn't get clusters for ingress %v in namespace %v", ingress.Name, ingress.Namespace)
+		return nil, fmt.Errorf("cloudn't get clusters for ingress %v in namespace %v", ingress.Name, ingress.Namespace)
 	}
 
 	return clusters, nil
@@ -2021,7 +2019,7 @@ func (eic *EnvoyIngressController) getRouteForIngress(ingress *ingressv1.Ingress
 						PathSpecifier: &envoy_route_v3.RouteMatch_SafeRegex{
 							SafeRegex: &matcher.RegexMatcher{
 								EngineType: &matcher.RegexMatcher_GoogleRe2{
-									&matcher.RegexMatcher_GoogleRE2{},
+									GoogleRe2: &matcher.RegexMatcher_GoogleRE2{},
 								},
 								Regex: clusterName,
 							},
@@ -2128,7 +2126,7 @@ func (eic *EnvoyIngressController) getListenersForIngress(ingress *ingressv1.Ing
 					},
 				},
 				HttpFilters: []*http.HttpFilter{
-					&http.HttpFilter{
+					{
 						Name: "router",
 						ConfigType: &http.HttpFilter_TypedConfig{
 							TypedConfig: &any.Any{
@@ -2171,7 +2169,6 @@ func (eic *EnvoyIngressController) getListenersForIngress(ingress *ingressv1.Ing
 				}
 				envoyListeners = append(envoyListeners, envoyListener)
 			}
-
 		}
 		httpCm := &http.HttpConnectionManager{
 			CodecType: http.HttpConnectionManager_AUTO,
@@ -2182,7 +2179,7 @@ func (eic *EnvoyIngressController) getListenersForIngress(ingress *ingressv1.Ing
 				},
 			},
 			HttpFilters: []*http.HttpFilter{
-				&http.HttpFilter{
+				{
 					Name: "router",
 					ConfigType: &http.HttpFilter_TypedConfig{
 						TypedConfig: &any.Any{
@@ -2215,7 +2212,7 @@ func (eic *EnvoyIngressController) getListenersForIngress(ingress *ingressv1.Ing
 	}
 
 	if len(envoyListeners) == 0 {
-		return nil, fmt.Errorf("Fail to create listeners for ingress %s in namespace %s", ingress.Name, ingress.Namespace)
+		return nil, fmt.Errorf("fail to create listeners for ingress %s in namespace %s", ingress.Name, ingress.Namespace)
 	}
 
 	return envoyListeners, nil
@@ -2241,7 +2238,6 @@ func Listener(name, address string, port int, lf []*envoy_listener_v3.ListenerFi
 }
 
 func TCPKeepaliveSocketOptions() []*envoy_core_v3.SocketOption {
-
 	// Note: TCP_KEEPIDLE + (TCP_KEEPINTVL * TCP_KEEPCNT) must be greater than
 	// the grpc.KeepaliveParams time + timeout (currently 60 + 20 = 80 seconds)
 	// otherwise TestGRPC/StreamClusters fails.
@@ -2295,7 +2291,6 @@ func FilterChainTLS(domain string, downstream *envoy_tls_v3.DownstreamTlsContext
 	// Attach TLS data to this listener if provided.
 	if downstream != nil {
 		fc.TransportSocket = DownstreamTLSTransportSocket(downstream)
-
 	}
 	return fc
 }
@@ -2445,7 +2440,7 @@ func (eic *EnvoyIngressController) consumer() {
 			nodesToSend[node] = true
 		}
 	}
-	for node, _ := range nodesToSend {
+	for node := range nodesToSend {
 		err := eic.dispatchResource(&envoyResource, model.InsertOperation, node)
 		if err != nil {
 			klog.Warning(err)
@@ -2482,7 +2477,7 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 			envoyResources := eic.ingressToResourceNameStore[key]
 			eic.ingressToResourceNameStoreLock.Unlock()
 			for _, envoyResource := range envoyResources {
-				for node, _ := range nodesToSend {
+				for node := range nodesToSend {
 					_ = eic.dispatchResource(&envoyResource, model.DeleteOperation, node)
 					switch envoyResource.Kind {
 					case SECRET:
@@ -2532,8 +2527,8 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	secrets, _ := eic.getSecretsForIngress(ingress)
 	for _, secret := range secrets {
 		eic.secretStoreLock.Lock()
-		if sec, ok := eic.secretStore[secret.Name]; !ok || !reflect.DeepEqual(sec.Secret, secret.Secret) {
-			eic.secretStore[secret.Name] = *secret
+		if sec, ok := eic.secretStore[secret.Name]; !ok || sec.Secret.Name != secret.Secret.Name || !reflect.DeepEqual(sec.Secret.Type, secret.Secret.Type) {
+			eic.secretStore[secret.Name] = secret
 			eic.ingressToResourceNameStoreLock.Lock()
 			eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: secret.Name, Kind: SECRET})
 			eic.ingressToResourceNameStoreLock.Unlock()
@@ -2549,8 +2544,11 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	} else {
 		for _, endpoint := range endpoints {
 			eic.endpointStoreLock.Lock()
-			if edp, ok := eic.endpointStore[endpoint.Name]; !ok || !reflect.DeepEqual(edp.ClusterLoadAssignment, endpoint.ClusterLoadAssignment) {
-				eic.endpointStore[endpoint.Name] = *endpoint
+			if edp, ok := eic.endpointStore[endpoint.Name]; !ok || edp.ClusterLoadAssignment.ClusterName != endpoint.ClusterLoadAssignment.ClusterName ||
+				!reflect.DeepEqual(edp.ClusterLoadAssignment.Endpoints, endpoint.ClusterLoadAssignment.Endpoints) ||
+				!reflect.DeepEqual(edp.ClusterLoadAssignment.NamedEndpoints, endpoint.ClusterLoadAssignment.NamedEndpoints) ||
+				!reflect.DeepEqual(edp.ClusterLoadAssignment.Policy, endpoint.ClusterLoadAssignment.Policy) {
+				eic.endpointStore[endpoint.Name] = endpoint
 				eic.ingressToResourceNameStoreLock.Lock()
 				eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: endpoint.Name, Kind: ENDPOINT})
 				eic.ingressToResourceNameStoreLock.Unlock()
@@ -2567,8 +2565,9 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	} else {
 		for _, cluster := range clusters {
 			eic.clusterStoreLock.Lock()
+			// TODO: do not copy lock
 			if cls, ok := eic.clusterStore[cluster.Name]; !ok || !reflect.DeepEqual(cls.Cluster, cluster.Cluster) {
-				eic.clusterStore[cluster.Name] = *cluster
+				eic.clusterStore[cluster.Name] = cluster
 				eic.ingressToResourceNameStoreLock.Lock()
 				eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: cluster.Name, Kind: CLUSTER})
 				eic.ingressToResourceNameStoreLock.Unlock()
@@ -2584,8 +2583,9 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		klog.Warning(err)
 	} else {
 		eic.routeStoreLock.Lock()
+		// TODO: do not copy lock
 		if rte, ok := eic.routeStore[route.Name]; !ok || !reflect.DeepEqual(rte.RouteConfiguration, route.RouteConfiguration) {
-			eic.routeStore[route.Name] = *route
+			eic.routeStore[route.Name] = route
 			eic.ingressToResourceNameStoreLock.Lock()
 			eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: route.Name, Kind: ROUTE})
 			eic.ingressToResourceNameStoreLock.Unlock()
@@ -2601,8 +2601,9 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	}
 	for _, listener := range listeners {
 		eic.listenerStoreLock.Lock()
+		// TODO: do not copy lock
 		if lis, ok := eic.listenerStore[listener.Name]; !ok || !reflect.DeepEqual(lis.Listener, listener.Listener) {
-			eic.listenerStore[listener.Name] = *listener
+			eic.listenerStore[listener.Name] = listener
 			eic.ingressToResourceNameStoreLock.Lock()
 			eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: listener.Name, Kind: LISTENER})
 			eic.ingressToResourceNameStoreLock.Unlock()
@@ -2620,7 +2621,7 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 	case SECRET:
 		secret, ok := eic.secretStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("Couldn't get secret %s from secret store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get secret %s from secret store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
@@ -2636,13 +2637,12 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 			return err
-		} else {
-			klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 		}
+		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 	case ENDPOINT:
 		endpoint, ok := eic.endpointStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("Couldn't get endpoint %s from endpoint store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get endpoint %s from endpoint store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
@@ -2658,13 +2658,12 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 			return err
-		} else {
-			klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 		}
+		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 	case CLUSTER:
 		cluster, ok := eic.clusterStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("Couldn't get cluster %s from cluster store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get cluster %s from cluster store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
@@ -2680,13 +2679,12 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 			return err
-		} else {
-			klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 		}
+		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 	case ROUTE:
 		route, ok := eic.routeStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("Couldn't get route %s from route store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get route %s from route store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
@@ -2702,13 +2700,12 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 			return err
-		} else {
-			klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 		}
+		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 	case LISTENER:
 		listener, ok := eic.listenerStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("Couldn't get route %s from route store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get route %s from route store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
@@ -2724,9 +2721,8 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 			return err
-		} else {
-			klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 		}
+		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 	}
 	return nil
 }
@@ -2736,7 +2732,7 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 func (eic *EnvoyIngressController) initiateNodeGroupsWithNodes() error {
 	nodeList, err := eic.nodeLister.List(labels.Everything())
 	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Cloudn't get clusters's node list"))
+		utilruntime.HandleError(fmt.Errorf("cloudn't get clusters's node list"))
 		return err
 	}
 	for _, node := range nodeList {
@@ -2775,7 +2771,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 		}
 		key, err := controller.KeyFunc(ingress)
 		if err != nil {
-			utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %+v: %v", ingress, err))
+			utilruntime.HandleError(fmt.Errorf("couldn't get key for object %+v: %v", ingress, err))
 			continue
 		}
 		nodegroup := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
@@ -2787,7 +2783,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 		secrets, _ := eic.getSecretsForIngress(ingress)
 		for _, secret := range secrets {
 			if sec, ok := eic.secretStore[secret.Name]; !ok || !reflect.DeepEqual(sec.Secret, secret.Secret) {
-				eic.secretStore[secret.Name] = *secret
+				eic.secretStore[secret.Name] = secret
 				eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: secret.Name, Kind: SECRET})
 				eic.resourceNeedToBeSentToEdgeStore = append(eic.resourceNeedToBeSentToEdgeStore, EnvoyResource{Name: secret.Name, Kind: SECRET})
 			}
@@ -2798,7 +2794,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 		}
 		for _, endpoint := range endpoints {
 			if edp, ok := eic.endpointStore[endpoint.Name]; !ok || !reflect.DeepEqual(endpoint.ClusterLoadAssignment, edp.ClusterLoadAssignment) {
-				eic.endpointStore[endpoint.Name] = *endpoint
+				eic.endpointStore[endpoint.Name] = endpoint
 				eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: endpoint.Name, Kind: ENDPOINT})
 				eic.resourceNeedToBeSentToEdgeStore = append(eic.resourceNeedToBeSentToEdgeStore, EnvoyResource{Name: endpoint.Name, Kind: ENDPOINT})
 			}
@@ -2809,7 +2805,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 		}
 		for _, cluster := range clusters {
 			if cls, ok := eic.clusterStore[cluster.Name]; !ok || !reflect.DeepEqual(cls.Cluster, cluster.Cluster) {
-				eic.clusterStore[cluster.Name] = *cluster
+				eic.clusterStore[cluster.Name] = cluster
 				eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: cluster.Name, Kind: CLUSTER})
 				eic.resourceNeedToBeSentToEdgeStore = append(eic.resourceNeedToBeSentToEdgeStore, EnvoyResource{Name: cluster.Name, Kind: CLUSTER})
 			}
@@ -2819,7 +2815,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 			continue
 		}
 		if rte, ok := eic.routeStore[route.Name]; !ok || !reflect.DeepEqual(rte.RouteConfiguration, route.RouteConfiguration) {
-			eic.routeStore[route.Name] = *route
+			eic.routeStore[route.Name] = route
 			eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: route.Name, Kind: ROUTE})
 			eic.resourceNeedToBeSentToEdgeStore = append(eic.resourceNeedToBeSentToEdgeStore, EnvoyResource{Name: route.Name, Kind: ROUTE})
 		}
@@ -2829,7 +2825,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 		}
 		for _, listener := range listeners {
 			if lis, ok := eic.listenerStore[listener.Name]; !ok || !reflect.DeepEqual(lis.Listener, listener.Listener) {
-				eic.listenerStore[listener.Name] = *listener
+				eic.listenerStore[listener.Name] = listener
 				eic.ingressToResourceNameStore[key] = append(eic.ingressToResourceNameStore[key], EnvoyResource{Name: listener.Name, Kind: LISTENER})
 				eic.resourceNeedToBeSentToEdgeStore = append(eic.resourceNeedToBeSentToEdgeStore, EnvoyResource{Name: listener.Name, Kind: LISTENER})
 			}

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/util/wait"
 
@@ -41,26 +42,43 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// TODO: when restarting and disconnect from cloud, read objects from sqlite3
+
 type envoyControlPlane struct {
-	enable         bool
-	envoySecrets   map[string]EnvoySecret
-	envoyEndpoints map[string]EnvoyEndpoint
-	envoyClusters  map[string]EnvoyCluster
-	envoyRoutes    map[string]EnvoyRoute
-	envoyListeners map[string]EnvoyListener
-	xdsCache       snapshotter
-	xdsAddr        string
-	xdsPort        string
-	nodeName       string
-	version        int
+	enable            bool
+	envoySecrets      map[string]*EnvoySecret
+	envoySecretLock   sync.RWMutex
+	envoyEndpoints    map[string]*EnvoyEndpoint
+	envoyEndpointLock sync.RWMutex
+	envoyClusters     map[string]*EnvoyCluster
+	envoyClusterLock  sync.RWMutex
+	envoyRoutes       map[string]*EnvoyRoute
+	envoyRouteLock    sync.RWMutex
+	envoyListeners    map[string]*EnvoyListener
+	envoyListenerLock sync.RWMutex
+	xdsCache          snapshotter
+	xdsAddr           string
+	xdsPort           string
+	nodeName          string
+	version           int
 }
 
-func newControlPlane(enable bool) *envoyControlPlane {
-	return &envoyControlPlane{enable: enable}
+func newControlPlane(enable bool, xdsAddr, xdsPort, nodeName string) *envoyControlPlane {
+	return &envoyControlPlane{
+		enable:         enable,
+		xdsAddr:        xdsAddr,
+		xdsPort:        xdsPort,
+		nodeName:       nodeName,
+		envoySecrets:   make(map[string]*EnvoySecret),
+		envoyEndpoints: make(map[string]*EnvoyEndpoint),
+		envoyClusters:  make(map[string]*EnvoyCluster),
+		envoyRoutes:    make(map[string]*EnvoyRoute),
+		envoyListeners: make(map[string]*EnvoyListener),
+	}
 }
 
 func Register(ecpc *v1alpha1.EnvoyControlPlaneConfig) {
-	controlplane := newControlPlane(ecpc.Enable)
+	controlplane := newControlPlane(ecpc.Enable, ecpc.XdsAddr, fmt.Sprintf("%d", ecpc.XdsPort), ecpc.NodeName)
 	core.Register(controlplane)
 }
 
@@ -87,7 +105,7 @@ func (e *envoyControlPlane) Start() {
 			}
 		}
 	}()
-	e.runEnvoyControlPlane()
+	go e.runEnvoyControlPlane()
 	// flush xdscache every minute
 	go wait.Until(e.FlushXDSCache, 60, beehiveContext.Done())
 	err := e.StartGrpcServer(taskCtx)
@@ -103,6 +121,7 @@ func (e *envoyControlPlane) FlushXDSCache() {
 	)
 	resources = make(map[envoy_types.ResponseType][]envoy_types.Resource)
 	// secret
+	e.envoySecretLock.RLock()
 	resources[envoy_types.Secret] = make([]envoy_types.Resource, len(e.envoySecrets))
 	index = 0
 	for _, envoySecret := range e.envoySecrets {
@@ -110,7 +129,9 @@ func (e *envoyControlPlane) FlushXDSCache() {
 		resources[envoy_types.Secret][index] = v.Interface().(envoy_types.Resource)
 		index++
 	}
+	e.envoySecretLock.RUnlock()
 	// endpoint
+	e.envoyEndpointLock.RLock()
 	resources[envoy_types.Endpoint] = make([]envoy_types.Resource, len(e.envoyEndpoints))
 	index = 0
 	for _, envoyEndpoint := range e.envoyEndpoints {
@@ -118,7 +139,9 @@ func (e *envoyControlPlane) FlushXDSCache() {
 		resources[envoy_types.Endpoint][index] = v.Interface().(envoy_types.Resource)
 		index++
 	}
+	e.envoyEndpointLock.RUnlock()
 	// cluster
+	e.envoyClusterLock.RLock()
 	resources[envoy_types.Cluster] = make([]envoy_types.Resource, len(e.envoyClusters))
 	index = 0
 	for _, envoyCluster := range e.envoyClusters {
@@ -126,7 +149,9 @@ func (e *envoyControlPlane) FlushXDSCache() {
 		resources[envoy_types.Cluster][index] = v.Interface().(envoy_types.Resource)
 		index++
 	}
+	e.envoyClusterLock.RUnlock()
 	// route
+	e.envoyRouteLock.RLock()
 	resources[envoy_types.Route] = make([]envoy_types.Resource, len(e.envoyRoutes))
 	index = 0
 	for _, envoyRoute := range e.envoyRoutes {
@@ -134,7 +159,9 @@ func (e *envoyControlPlane) FlushXDSCache() {
 		resources[envoy_types.Route][index] = v.Interface().(envoy_types.Resource)
 		index++
 	}
+	e.envoyRouteLock.RUnlock()
 	// listener
+	e.envoyListenerLock.RLock()
 	resources[envoy_types.Listener] = make([]envoy_types.Resource, len(e.envoyListeners))
 	index = 0
 	for _, envoyListener := range e.envoyListeners {
@@ -142,8 +169,9 @@ func (e *envoyControlPlane) FlushXDSCache() {
 		resources[envoy_types.Listener][index] = v.Interface().(envoy_types.Resource)
 		index++
 	}
+	e.envoyListenerLock.RUnlock()
 	e.version++
-	err := e.xdsCache.Generate(string(e.version), resources, e.nodeName)
+	err := e.xdsCache.Generate(fmt.Sprintf("%d", e.version), resources, e.nodeName)
 	if err != nil {
 		klog.Error(err)
 	}

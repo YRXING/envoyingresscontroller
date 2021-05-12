@@ -10,9 +10,7 @@ import (
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common/model"
-
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
-
 	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/config"
 	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 	v1 "k8s.io/api/core/v1"
@@ -70,7 +68,10 @@ func newNode(name string, label map[string]string) *v1.Node {
 
 func addNodes(nodeStore cache.Store, startIndex, numNodes int, label map[string]string) {
 	for i := startIndex; i < startIndex+numNodes; i++ {
-		nodeStore.Add(newNode(fmt.Sprintf("node-%d", i), label))
+		err := nodeStore.Add(newNode(fmt.Sprintf("node-%d", i), label))
+		if err != nil {
+			klog.Error(err)
+		}
 	}
 }
 
@@ -89,7 +90,7 @@ func newIngress(name string, annotation map[string]string, serviceName string, s
 					Host: "bar.foo.com",
 					IngressRuleValue: ingressv1.IngressRuleValue{
 						HTTP: &ingressv1.HTTPIngressRuleValue{
-							[]ingressv1.HTTPIngressPath{
+							Paths: []ingressv1.HTTPIngressPath{
 								{
 									Path:     "/login",
 									PathType: &pathType,
@@ -111,7 +112,10 @@ func newIngress(name string, annotation map[string]string, serviceName string, s
 
 func addIngresses(ingressStore cache.Store, number int, annotation map[string]string, serviceName []string, serviceBackendPort []ingressv1.ServiceBackendPort) {
 	for i := 0; i < number; i++ {
-		ingressStore.Add(newIngress(fmt.Sprintf("ingress-%d", i), annotation, serviceName[i], serviceBackendPort[i]))
+		err := ingressStore.Add(newIngress(fmt.Sprintf("ingress-%d", i), annotation, serviceName[i], serviceBackendPort[i]))
+		if err != nil {
+			klog.Error(err)
+		}
 	}
 }
 
@@ -150,7 +154,10 @@ func newV1beta1Ingress(name string, annotation map[string]string, serviceName st
 
 func addV1beta1Ingresses(v1beta1IngressStore cache.Store, number int, annotation map[string]string, serviceName []string, serviceBackendPort []intstr.IntOrString) {
 	for i := 0; i < number; i++ {
-		v1beta1IngressStore.Add(newV1beta1Ingress(fmt.Sprintf("v1beta1Ingress-%d", i), annotation, serviceName[i], serviceBackendPort[i]))
+		err := v1beta1IngressStore.Add(newV1beta1Ingress(fmt.Sprintf("v1beta1Ingress-%d", i), annotation, serviceName[i], serviceBackendPort[i]))
+		if err != nil {
+			klog.Error(err)
+		}
 	}
 }
 
@@ -176,7 +183,10 @@ func newService(name string, selector map[string]string, portName string, portNu
 
 func addServices(serviceStore cache.Store, number int, selector map[string]string) {
 	for i := 0; i < number; i++ {
-		serviceStore.Add(newService(fmt.Sprintf("service-%d", i), selector, "servicePort-%d", int32(rand.Intn(1000)+100)))
+		err := serviceStore.Add(newService(fmt.Sprintf("service-%d", i), selector, "servicePort-%d", int32(rand.Intn(1000)+100)))
+		if err != nil {
+			klog.Error(err)
+		}
 	}
 }
 
@@ -214,7 +224,10 @@ func newPod(podName string, nodeName string, label map[string]string) *v1.Pod {
 
 func addPods(podStore cache.Store, nodeName string, label map[string]string, number int) {
 	for i := 0; i < number; i++ {
-		podStore.Add(newPod(fmt.Sprintf("pod-%dd", i), nodeName, label))
+		err := podStore.Add(newPod(fmt.Sprintf("pod-%dd", i), nodeName, label))
+		if err != nil {
+			klog.Error(err)
+		}
 	}
 }
 
@@ -290,7 +303,10 @@ func newSecret(name, cert, key string) *v1.Secret {
 
 func addSecrets(secretStore cache.Store, number int) {
 	for i := 0; i < number; i++ {
-		secretStore.Add(newSecret(fmt.Sprintf("secret-%d", i), "cert", "key"))
+		err := secretStore.Add(newSecret(fmt.Sprintf("secret-%d", i), "cert", "key"))
+		if err != nil {
+			klog.Error(err)
+		}
 	}
 }
 
@@ -305,7 +321,7 @@ func newTestController(initialObjects ...runtime.Object) (*envoyIngressControlle
 		informerFactory.Networking().V1beta1().Ingresses(),
 		informerFactory.Core().V1().Nodes(),
 		informerFactory.Core().V1().Services(),
-		EnvoyIngressControllerConfiguration{
+		EICConfiguration{
 			syncInterval:                 1,
 			envoyServiceSyncInterval:     1,
 			ingressSyncWorkerNumber:      5,
@@ -759,7 +775,10 @@ func TestAddService(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
 	ingresses := manager.getIngressesForService(service)
 	if len(ingresses) == 0 {
@@ -805,7 +824,10 @@ func TestUpdateService(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
 	curService := newService("service-0", newSelector, "port-1", 9001)
 	ingresses := manager.getIngressesForService(service)
@@ -849,7 +871,10 @@ func TestDeleteService(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
 	ingresses := manager.getIngressesForService(service)
 	if len(ingresses) == 0 {
@@ -892,11 +917,20 @@ func TestAddEndpoint(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
-	manager.serviceStore.Add(service)
+	err = manager.serviceStore.Add(service)
+	if err != nil {
+		klog.Error(err)
+	}
 	pod := newPod("pod-0", "node-0", selector)
-	manager.podStore.Add(pod)
+	err = manager.podStore.Add(pod)
+	if err != nil {
+		klog.Error(err)
+	}
 	endpoint := newEndpoint(pod, service)
 	manager.addEndpoint(endpoint)
 	if manager.queue.Len() == 0 {
@@ -935,14 +969,26 @@ func TestUpdateEndpoint(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
-	manager.serviceStore.Add(service)
+	err = manager.serviceStore.Add(service)
+	if err != nil {
+		klog.Error(err)
+	}
 	pod := newPod("pod-0", "node-0", selector)
-	manager.podStore.Add(pod)
+	err = manager.podStore.Add(pod)
+	if err != nil {
+		klog.Error(err)
+	}
 	endpoint := newEndpoint(pod, service)
 	newService := newService("service-0", selector, "port-0", 9001)
-	manager.serviceStore.Update(newService)
+	err = manager.serviceStore.Update(newService)
+	if err != nil {
+		klog.Error(err)
+	}
 	newEndpoint := newEndpoint(pod, newService)
 	manager.updateEndpoint(endpoint, newEndpoint)
 	if manager.queue.Len() == 0 {
@@ -981,11 +1027,20 @@ func TestDeleteEndpoint(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
-	manager.serviceStore.Add(service)
+	err = manager.serviceStore.Add(service)
+	if err != nil {
+		klog.Error(err)
+	}
 	pod := newPod("pod-0", "node-0", selector)
-	manager.podStore.Add(pod)
+	err = manager.podStore.Add(pod)
+	if err != nil {
+		klog.Error(err)
+	}
 	endpoint := newEndpoint(pod, service)
 	manager.deleteEndpoint(endpoint)
 	if manager.queue.Len() == 0 {
@@ -1027,7 +1082,10 @@ func TestAddSecret(t *testing.T) {
 			SecretName: "fooSecret",
 		},
 	}
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	secret := newSecret("fooSecret", "cert", "key")
 	manager.addSecret(secret)
 	if manager.queue.Len() == 0 {
@@ -1069,7 +1127,10 @@ func TestUpdateSecret(t *testing.T) {
 			SecretName: "fooSecret",
 		},
 	}
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	secret := newSecret("fooSecret", "cert", "key")
 	curSecret := newSecret("fooSecret", "cert1", "key")
 	manager.updateSecret(secret, curSecret)
@@ -1112,7 +1173,10 @@ func TestDeleteSecret(t *testing.T) {
 			SecretName: "fooSecret",
 		},
 	}
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	secret := newSecret("fooSecret", "cert", "key")
 	manager.deleteSecret(secret)
 	if manager.queue.Len() == 0 {
@@ -1151,7 +1215,10 @@ func TestGetIngressesForService(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
 	ingresses := manager.getIngressesForService(service)
 	if len(ingresses) == 0 {
@@ -1185,9 +1252,15 @@ func TestGetServicesForIngress(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
-	manager.serviceStore.Add(service)
+	err = manager.serviceStore.Add(service)
+	if err != nil {
+		klog.Error(err)
+	}
 	services, _ := manager.getServicesForIngress(ingress)
 	if len(services) == 0 {
 		t.Fatalf("failed to get ingresses for service %s in namespace %s", service.Name, service.Namespace)
@@ -1223,7 +1296,10 @@ func TestGetIngressesForSecret(t *testing.T) {
 			SecretName: "fooSecret",
 		},
 	}
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		klog.Error(err)
+	}
 	secret := newSecret("fooSecret", "cert", "key")
 	ingresses := manager.getIngressesForSecret(secret)
 	if len(ingresses) == 0 {
@@ -1329,16 +1405,28 @@ func TestDispatchResource(t *testing.T) {
 	count := 0
 	var counter *time.Timer
 	node := newNode("node-0", map[string]string{"nodegroup": "guiyang"})
-	manager.nodeStore.Add(node)
+	err = manager.nodeStore.Add(node)
+	if err != nil {
+		t.Error(err)
+	}
 	manager.addNode(node)
 	ingress := newIngress("ingress-0", annotation, "service-0", ingressv1.ServiceBackendPort{Name: "http", Number: 9000})
-	manager.ingressStore.Add(ingress)
+	err = manager.ingressStore.Add(ingress)
+	if err != nil {
+		t.Error(err)
+	}
 	service := newService("service-0", selector, "port-0", 9000)
-	manager.serviceStore.Add(service)
+	err = manager.serviceStore.Add(service)
+	if err != nil {
+		t.Error(err)
+	}
 	pod := newPod("pod-0", "node-0", selector)
-	manager.podStore.Add(pod)
+	err = manager.podStore.Add(pod)
 	endpoint := newEndpoint(pod, service)
-	manager.endpointStore.Add(endpoint)
+	err = manager.endpointStore.Add(endpoint)
+	if err != nil {
+		t.Error(err)
+	}
 	manager.addIngress(ingress)
 	counter = time.NewTimer(time.Duration(10000000000))
 	ch := make(chan int, 1)
@@ -1347,12 +1435,12 @@ func TestDispatchResource(t *testing.T) {
 			select {
 			case <-beehiveContext.Done():
 				return
-			case _ = <-fch.ch:
+			case <-fch.ch:
 				count++
 				if count == 4 {
 					ch <- 1
 				}
-			case _ = <-counter.C:
+			case <-counter.C:
 				t.Fatalf("takes too long to dispatch messages")
 			}
 		}
@@ -1399,8 +1487,11 @@ func TestInitEnvoyEnvoyResources(t *testing.T) {
 	addEndpoints(manager.endpointStore, manager.serviceStore, manager.podStore)
 	for _, _service := range manager.serviceStore.List() {
 		service := _service.(*v1.Service)
-		manager.ingressStore.Add(newIngress("ingressTest", annotation, service.Name,
+		err = manager.ingressStore.Add(newIngress("ingressTest", annotation, service.Name,
 			ingressv1.ServiceBackendPort{Name: service.Spec.Ports[0].Name, Number: service.Spec.Ports[0].Port}))
+		if err != nil {
+			t.Error(err)
+		}
 	}
 	addSecrets(manager.secretStore, 1)
 	err = manager.initiateNodeGroupsWithNodes()

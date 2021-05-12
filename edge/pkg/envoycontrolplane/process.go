@@ -7,7 +7,6 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/edge/pkg/envoycontrolplane/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/envoycontrolplane/dao"
 	"k8s.io/klog/v2"
 )
@@ -16,7 +15,7 @@ func feedBackError(err error, info string, request model.Message) {
 
 }
 func sendToCloud(message *model.Message) {
-	beehiveContext.SendToGroup(string(config.Config.ContextSendGroup), *message)
+	//beehiveContext.SendToGroup(string(config.Config.ContextSendGroup), *message)
 }
 
 func validation(message *model.Message) {
@@ -76,12 +75,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 	//TODO: switch resTpe cluster/endpoint/listener/router/secret
 	switch resType {
 	case string(SECRET):
-		var envoySecret EnvoySecret
-		err = json.Unmarshal(content, &envoySecret)
+		var envoySecret = &EnvoySecret{}
+		err = json.Unmarshal(content, envoySecret)
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy secret, error: %v", err)
 		}
+		e.envoySecretLock.Lock()
 		e.envoySecrets[envoySecret.Name] = envoySecret
+		e.envoySecretLock.Unlock()
 		secret := &dao.Secret{
 			Name:  resKey,
 			Value: string(content),
@@ -92,12 +93,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 			return
 		}
 	case string(ENDPOINT):
-		var envoyEndpoint EnvoyEndpoint
-		err = json.Unmarshal(content, &envoyEndpoint)
+		var envoyEndpoint = &EnvoyEndpoint{}
+		err = json.Unmarshal(content, envoyEndpoint)
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy endpoint, error: %v", err)
 		}
+		e.envoyEndpointLock.Lock()
 		e.envoyEndpoints[envoyEndpoint.Name] = envoyEndpoint
+		e.envoyEndpointLock.Unlock()
 		endpoint := &dao.Endpoint{
 			Name:  resKey,
 			Value: string(content),
@@ -108,12 +111,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 			return
 		}
 	case string(CLUSTER):
-		var envoyCluster EnvoyCluster
-		err = json.Unmarshal(content, &envoyCluster)
+		var envoyCluster = &EnvoyCluster{}
+		err = json.Unmarshal(content, envoyCluster)
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy cluster, error: %v", err)
 		}
+		e.envoyClusterLock.Lock()
 		e.envoyClusters[envoyCluster.Name] = envoyCluster
+		e.envoyClusterLock.Unlock()
 		cluster := &dao.Cluster{
 			Name:  resKey,
 			Value: string(content),
@@ -124,12 +129,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 			return
 		}
 	case string(ROUTE):
-		var envoyRoute EnvoyRoute
-		err = json.Unmarshal(content, &envoyRoute)
+		var envoyRoute = &EnvoyRoute{}
+		err = json.Unmarshal(content, envoyRoute)
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy route, error: %v", err)
 		}
+		e.envoyRouteLock.Lock()
 		e.envoyRoutes[envoyRoute.Name] = envoyRoute
+		e.envoyRouteLock.Unlock()
 		route := &dao.Router{
 			Name:  resKey,
 			Value: string(content),
@@ -140,12 +147,14 @@ func (e *envoyControlPlane) processInsert(message model.Message) {
 			return
 		}
 	case string(LISTENER):
-		var envoyListener EnvoyListener
-		err = json.Unmarshal(content, &envoyListener)
+		var envoyListener = &EnvoyListener{}
+		err = json.Unmarshal(content, envoyListener)
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy listener, error: %v", err)
 		}
+		e.envoyListenerLock.Lock()
 		e.envoyListeners[envoyListener.Name] = envoyListener
+		e.envoyListenerLock.Unlock()
 		listener := &dao.Listener{
 			Name:  resKey,
 			Value: string(content),
@@ -173,8 +182,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) {
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy secret, error: %v", err)
 		}
+		e.envoySecretLock.Lock()
 		if _, ok := e.envoySecrets[envoySecret.Name]; ok {
 			delete(e.envoySecrets, envoySecret.Name)
+			e.envoySecretLock.Unlock()
 			err = dao.DeleteSecretByName(resKey)
 			if err != nil {
 				klog.Errorf("delete secret failed,%s", msgDebugInfo(&message))
@@ -187,8 +198,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) {
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy endpoint, error: %v", err)
 		}
+		e.envoyEndpointLock.Lock()
 		if _, ok := e.envoyEndpoints[envoyEndpoint.Name]; ok {
 			delete(e.envoyEndpoints, envoyEndpoint.Name)
+			e.envoyEndpointLock.Unlock()
 			err = dao.DeleteEndpointByName(resKey)
 			if err != nil {
 				klog.Errorf("delete endpoint failed,%s", msgDebugInfo(&message))
@@ -201,8 +214,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) {
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy cluster, error: %v", err)
 		}
+		e.envoyClusterLock.Lock()
 		if _, ok := e.envoyClusters[envoyCluster.Name]; ok {
 			delete(e.envoyClusters, envoyCluster.Name)
+			e.envoyClusterLock.Unlock()
 			err = dao.DeleteClusterByName(resKey)
 			if err != nil {
 				klog.Errorf("delete cluster failed,%s", msgDebugInfo(&message))
@@ -215,8 +230,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) {
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy route, error: %v", err)
 		}
+		e.envoyRouteLock.Lock()
 		if _, ok := e.envoyRoutes[envoyRoute.Name]; ok {
 			delete(e.envoyRoutes, envoyRoute.Name)
+			e.envoyRouteLock.Unlock()
 			err = dao.DeleteRouterByName(resKey)
 			if err != nil {
 				klog.Errorf("delete route failed,%s", msgDebugInfo(&message))
@@ -229,8 +246,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) {
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy listener, error: %v", err)
 		}
+		e.envoyListenerLock.Lock()
 		if _, ok := e.envoyListeners[envoyListener.Name]; ok {
 			delete(e.envoyListeners, envoyListener.Name)
+			e.envoyListenerLock.Unlock()
 			err = dao.DeleteListenerByName(resKey)
 			if err != nil {
 				klog.Errorf("delete listener failed,%s", msgDebugInfo(&message))
@@ -251,20 +270,18 @@ func (e *envoyControlPlane) process(message model.Message) {
 }
 
 func (e *envoyControlPlane) runEnvoyControlPlane() {
-	go func() {
-		for {
-			select {
-			case <-beehiveContext.Done():
-				klog.Warning("EnvoyControlPlane mainloop stop")
-				return
-			default:
-			}
-			if msg, err := beehiveContext.Receive(e.Name()); err != nil {
-				klog.V(2).Infof("get a message %+v", msg)
-				e.process(msg)
-			} else {
-				klog.Errorf("get a message %+v: %v", msg, err)
-			}
+	for {
+		select {
+		case <-beehiveContext.Done():
+			klog.Warning("EnvoyControlPlane mainloop stop")
+			return
+		default:
 		}
-	}()
+		if msg, err := beehiveContext.Receive(e.Name()); err != nil {
+			klog.V(2).Infof("get a message %+v", msg)
+			e.process(msg)
+		} else {
+			klog.Errorf("get a message %+v: %v", msg, err)
+		}
+	}
 }
