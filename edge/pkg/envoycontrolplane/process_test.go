@@ -5,14 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/protobuf/proto"
-
-	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
-
 	controller "github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
 	"github.com/kubeedge/kubeedge/common/constants"
-	"github.com/kubeedge/kubeedge/edge/pkg/envoycontrolplane/dao"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "k8s.io/api/core/v1"
@@ -256,41 +250,50 @@ func BuildResource(nodeID, namespace, resourceType, resourceID string) (resource
 	return
 }
 
-func TestProcessInsert(t *testing.T) {
-	ecp := newControlPlane(true, "127.0.0.1", "18000", "node-0")
-	dao.InitDBTable(ecp)
-	dbm.InitDBConfig("sqlite3", "default", "/home/hoshino/edgecore.db")
-	secret := newEnvoySecret("testsecret")
-	//resource, err := BuildResource("node-0", secret.Namespace, string(SECRET), secret.Name)
-	//if err != nil {
-	//	t.Fatalf("built message resource failed with error: %s", err)
-	//}
-	//if err != nil {
-	//	t.Fatalf("failed to marshal secret into json, err: %v", err)
-	//}
-	v, err := proto.Marshal(&secret.Secret)
-	if err != nil {
-		t.Fatalf("")
-	}
-	var newSecret = &envoy_tls_v3.Secret{}
-	err = proto.Unmarshal(v, newSecret)
-	if true {
-		t.Fatalf("")
-	}
-	//msg := model.NewMessage("").SetResourceVersion(secret.ResourceVersion).
-	//	BuildRouter("envoycontrolplane", "envoycontrolplane", resource, model.InsertOperation).
-	//	FillBody(secretJson)
-	//err = ecp.processInsert(*msg)
-	//if err != nil {
-	//	t.Fatalf("insert secret into database failed with error: %s", err)
-	//}
-	//secrets, err := dao.QuerySecret("testsecret", "test")
-	//if err != nil {
-	//	t.Fatalf("failed to query secrets from database, err: %v", err)
-	//}
-	//if len(*secrets) == 0 {
-	//	t.Fatalf("failed to query secrets from database, got empty secret slice")
-	//}
-}
+//func TestProcessInsert(t *testing.T) {
+//	ecp := newControlPlane(true, "127.0.0.1", "18000", "node-0")
+//	dao.InitDBTable(ecp)
+//	dbm.InitDBConfig("sqlite3", "default", "/home/hoshino/edgecore.db")
+//	secret := newEnvoySecret("testsecret")
+//	resource, err := BuildResource("node-0", secret.Namespace, string(SECRET), secret.Name)
+//	if err != nil {
+//		t.Fatalf("built message resource failed with error: %s", err)
+//	}
+//	v, err := proto.Marshal(&secret.Secret)
+//	if err != nil {
+//		t.Fatalf("")
+//	}
+//	//var newSecret = &envoy_tls_v3.Secret{}
+//	//err = proto.Unmarshal(v, newSecret)
+//	//if !reflect.DeepEqual(&secret.Secret, newSecret) {
+//	//	t.Fatalf("")
+//	//}
+//	msg := model.NewMessage("").SetResourceVersion(secret.ResourceVersion).
+//		BuildRouter("envoycontrolplane", "envoycontrolplane", resource, model.InsertOperation).
+//		FillBody(v)
+//	err = ecp.processInsert(*msg)
+//	if err != nil {
+//		t.Fatalf("insert secret into database failed with error: %s", err)
+//	}
+//	secrets, err := dao.QuerySecret("name", "node/node-0/default/Secret/testsecret")
+//	if err != nil {
+//		t.Fatalf("failed to query secrets from database, err: %v", err)
+//	}
+//	if len(*secrets) == 0 {
+//		t.Fatalf("failed to query secrets from database, got empty secret slice")
+//	}
+//	dst, err := base64.StdEncoding.DecodeString((*secrets)[0].Value)
+//	if err != nil {
+//		t.Fatalf("failed to decode base64 endcoded string, err: %v", err)
+//	}
+//	if !reflect.DeepEqual(v, dst) {
+//		t.Fatalf("conversion loss")
+//	}
+//	var newSecret = &envoy_tls_v3.Secret{}
+//	err = proto.Unmarshal(dst, newSecret)
+//	if err != nil {
+//		t.Fatalf("failed to recover secret from byte[], err: %v", err)
+//	}
+//}
 
 func TestProcessDelete(t *testing.T) {}

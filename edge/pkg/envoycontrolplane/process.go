@@ -1,9 +1,15 @@
 package envoycontrolplane
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	controller "github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
+	"github.com/kubeedge/kubeedge/common/constants"
+
+	"github.com/golang/protobuf/proto"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
@@ -64,6 +70,20 @@ func generateContent(message model.Message) ([]byte, error) {
 	return content, err
 }
 
+// GetNamespace from "beehive/pkg/core/model".Model.Router.Resource
+func GetNamespace(msg model.Message) (string, error) {
+	sli := strings.Split(msg.GetResource(), constants.ResourceSep)
+	if len(sli) <= controller.ResourceNamespaceIndex {
+		return "", fmt.Errorf("namespace not found")
+	}
+
+	res := sli[controller.ResourceNamespaceIndex]
+	index := controller.ResourceNamespaceIndex
+
+	klog.V(4).Infof("The namespace is %s, %d", res, index)
+	return res, nil
+}
+
 func (e *envoyControlPlane) processInsert(message model.Message) error {
 	content, err := generateContent(message)
 	if err != nil {
@@ -72,196 +92,208 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 	resKey, resType, _ := parseResource(message.GetResource())
 
 	//TODO: switch resTpe cluster/endpoint/listener/router/secret
+	envoyResourceString, err := base64.StdEncoding.DecodeString(string(content))
+	if err != nil {
+		klog.Errorf("failed to decode base64 encoded content into %s, err: %v", resType, err)
+		return err
+	}
+	var daoResource dao.DaoResource
+	var envoyResource EnvoyResourceInterface
 	switch resType {
 	case string(SECRET):
-		var envoySecret = &EnvoySecret{}
-		err = json.Unmarshal(content, envoySecret)
+		envoyResource = &EnvoySecret{}
+	case string(ENDPOINT):
+		envoyResource = &EnvoyEndpoint{}
+	case string(CLUSTER):
+		envoyResource = &EnvoyCluster{}
+	case string(ROUTE):
+		envoyResource = &EnvoyRoute{}
+	case string(LISTENER):
+		envoyResource = &EnvoyListener{}
+	default:
+		return fmt.Errorf("unknown resource type")
+	}
+	envoyResource.SetName(resKey)
+	namespace, err := GetNamespace(message)
+	if err != nil {
+		klog.Errorf("failed to get namespace from message, err: %v", err)
+		namespace = "default"
+	}
+	envoyResource.SetNamespace(namespace)
+	switch resType {
+	case string(SECRET):
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource).(*EnvoySecret).Secret))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy secret, error: %v", err)
+			return err
 		}
 		e.envoySecretLock.Lock()
-		e.envoySecrets[envoySecret.Name] = envoySecret
+		e.envoySecrets[envoyResource.GetName()] = envoyResource.(*EnvoySecret)
 		e.envoySecretLock.Unlock()
-		secret := &dao.Secret{
+		daoResource = &dao.Secret{
 			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
-		}
-		err = dao.InsertOrUpdateSecret(secret)
-		if err != nil {
-			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return err
 		}
 	case string(ENDPOINT):
-		var envoyEndpoint = &EnvoyEndpoint{}
-		err = json.Unmarshal(content, envoyEndpoint)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyEndpoint)).ClusterLoadAssignment))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy endpoint, error: %v", err)
+			return err
 		}
 		e.envoyEndpointLock.Lock()
-		e.envoyEndpoints[envoyEndpoint.Name] = envoyEndpoint
+		e.envoyEndpoints[envoyResource.GetName()] = envoyResource.(*EnvoyEndpoint)
 		e.envoyEndpointLock.Unlock()
-		endpoint := &dao.Endpoint{
+		daoResource = &dao.Endpoint{
 			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
-		}
-		err = dao.InsertOrUpdateEndpoint(endpoint)
-		if err != nil {
-			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return err
 		}
 	case string(CLUSTER):
-		var envoyCluster = &EnvoyCluster{}
-		err = json.Unmarshal(content, envoyCluster)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyCluster)).Cluster))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy cluster, error: %v", err)
+			return err
 		}
 		e.envoyClusterLock.Lock()
-		e.envoyClusters[envoyCluster.Name] = envoyCluster
+		e.envoyClusters[envoyResource.GetName()] = envoyResource.(*EnvoyCluster)
 		e.envoyClusterLock.Unlock()
-		cluster := &dao.Cluster{
+		daoResource = &dao.Cluster{
 			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
-		}
-		err = dao.InsertOrUpdateCluster(cluster)
-		if err != nil {
-			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return err
 		}
 	case string(ROUTE):
-		var envoyRoute = &EnvoyRoute{}
-		err = json.Unmarshal(content, envoyRoute)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyRoute)).RouteConfiguration))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy route, error: %v", err)
+			return err
 		}
 		e.envoyRouteLock.Lock()
-		e.envoyRoutes[envoyRoute.Name] = envoyRoute
+		e.envoyRoutes[envoyResource.GetName()] = envoyResource.(*EnvoyRoute)
 		e.envoyRouteLock.Unlock()
-		route := &dao.Router{
+		daoResource = &dao.Router{
 			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
-		}
-		err = dao.InsertOrUpdateRouter(route)
-		if err != nil {
-			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return err
 		}
 	case string(LISTENER):
-		var envoyListener = &EnvoyListener{}
-		err = json.Unmarshal(content, envoyListener)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyListener)).Listener))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy listener, error: %v", err)
+			return err
 		}
 		e.envoyListenerLock.Lock()
-		e.envoyListeners[envoyListener.Name] = envoyListener
+		e.envoyListeners[envoyResource.GetName()] = envoyResource.(*EnvoyListener)
 		e.envoyListenerLock.Unlock()
-		listener := &dao.Listener{
+		daoResource = &dao.Listener{
 			ID:    resKey,
 			Name:  resKey,
 			Value: string(content),
 		}
-		err = dao.InsertOrUpdateListener(listener)
-		if err != nil {
-			klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
-			return err
-		}
+	}
+	err = dao.InsertOrUpdateResource(daoResource)
+	if err != nil {
+		klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
+		return err
 	}
 	return nil
 }
 
-func (e *envoyControlPlane) processDelete(message model.Message) {
+func (e *envoyControlPlane) processDelete(message model.Message) error {
 	content, err := generateContent(message)
 	if err != nil {
 		klog.Errorf("insert message failed, %s", msgDebugInfo(&message))
 	}
 	resKey, resType, _ := parseResource(message.GetResource())
 
-	//TODO: switch resTpe cluster/endpoint/listener/router/secret
+	//TODO: switch resTpe cluster/endpoint/listener/router/
+	envoyResourceString, err := base64.StdEncoding.DecodeString(string(content))
+	if err != nil {
+		klog.Errorf("failed to decode base64 encoded content into %s, err: %v", resType, err)
+		return err
+	}
+	var daoResource dao.DaoResource
+	var envoyResource EnvoyResourceInterface
 	switch resType {
 	case string(SECRET):
-		var envoySecret EnvoySecret
-		err = json.Unmarshal(content, &envoySecret)
+		envoyResource = &EnvoySecret{}
+	case string(ENDPOINT):
+		envoyResource = &EnvoyEndpoint{}
+	case string(CLUSTER):
+		envoyResource = &EnvoyCluster{}
+	case string(ROUTE):
+		envoyResource = &EnvoyRoute{}
+	case string(LISTENER):
+		envoyResource = &EnvoyListener{}
+	default:
+		return fmt.Errorf("unknown resource type")
+	}
+	envoyResource.SetName(resKey)
+	namespace, err := GetNamespace(message)
+	if err != nil {
+		klog.Errorf("failed to get namespace from message, err: %v", err)
+		namespace = "default"
+	}
+	envoyResource.SetNamespace(namespace)
+	switch resType {
+	case string(SECRET):
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoySecret)).Secret))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy secret, error: %v", err)
 		}
 		e.envoySecretLock.Lock()
-		if _, ok := e.envoySecrets[envoySecret.Name]; ok {
-			delete(e.envoySecrets, envoySecret.Name)
-			e.envoySecretLock.Unlock()
-			err = dao.DeleteSecretByName(resKey)
-			if err != nil {
-				klog.Errorf("delete secret failed,%s", msgDebugInfo(&message))
-				return
-			}
+		if _, ok := e.envoySecrets[envoyResource.GetName()]; ok {
+			delete(e.envoySecrets, envoyResource.GetName())
 		}
+		e.envoySecretLock.Unlock()
 	case string(ENDPOINT):
-		var envoyEndpoint EnvoyEndpoint
-		err = json.Unmarshal(content, &envoyEndpoint)
+		err = json.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyEndpoint)).ClusterLoadAssignment))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy endpoint, error: %v", err)
 		}
 		e.envoyEndpointLock.Lock()
-		if _, ok := e.envoyEndpoints[envoyEndpoint.Name]; ok {
-			delete(e.envoyEndpoints, envoyEndpoint.Name)
-			e.envoyEndpointLock.Unlock()
-			err = dao.DeleteEndpointByName(resKey)
-			if err != nil {
-				klog.Errorf("delete endpoint failed,%s", msgDebugInfo(&message))
-				return
-			}
+		if _, ok := e.envoyEndpoints[envoyResource.GetName()]; ok {
+			delete(e.envoyEndpoints, envoyResource.GetName())
 		}
+		e.envoyEndpointLock.Unlock()
 	case string(CLUSTER):
-		var envoyCluster EnvoyCluster
-		err = json.Unmarshal(content, &envoyCluster)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyCluster)).Cluster))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy cluster, error: %v", err)
 		}
 		e.envoyClusterLock.Lock()
-		if _, ok := e.envoyClusters[envoyCluster.Name]; ok {
-			delete(e.envoyClusters, envoyCluster.Name)
-			e.envoyClusterLock.Unlock()
-			err = dao.DeleteClusterByName(resKey)
-			if err != nil {
-				klog.Errorf("delete cluster failed,%s", msgDebugInfo(&message))
-				return
-			}
+		if _, ok := e.envoyClusters[envoyResource.GetName()]; ok {
+			delete(e.envoyClusters, envoyResource.GetName())
 		}
+		e.envoyClusterLock.Unlock()
 	case string(ROUTE):
-		var envoyRoute EnvoyRoute
-		err = json.Unmarshal(content, &envoyRoute)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyRoute)).RouteConfiguration))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy route, error: %v", err)
 		}
 		e.envoyRouteLock.Lock()
-		if _, ok := e.envoyRoutes[envoyRoute.Name]; ok {
-			delete(e.envoyRoutes, envoyRoute.Name)
-			e.envoyRouteLock.Unlock()
-			err = dao.DeleteRouterByName(resKey)
-			if err != nil {
-				klog.Errorf("delete route failed,%s", msgDebugInfo(&message))
-				return
-			}
+		if _, ok := e.envoyRoutes[envoyResource.GetName()]; ok {
+			delete(e.envoyRoutes, envoyResource.GetName())
 		}
+		e.envoyRouteLock.Unlock()
 	case string(LISTENER):
-		var envoyListener EnvoyListener
-		err = json.Unmarshal(content, &envoyListener)
+		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyListener)).Listener))
 		if err != nil {
 			klog.Errorf("failed to unmarshal content into envoy listener, error: %v", err)
 		}
 		e.envoyListenerLock.Lock()
-		if _, ok := e.envoyListeners[envoyListener.Name]; ok {
-			delete(e.envoyListeners, envoyListener.Name)
-			e.envoyListenerLock.Unlock()
-			err = dao.DeleteListenerByName(resKey)
-			if err != nil {
-				klog.Errorf("delete listener failed,%s", msgDebugInfo(&message))
-				return
-			}
+		if _, ok := e.envoyListeners[envoyResource.GetName()]; ok {
+			delete(e.envoyListeners, envoyResource.GetName())
 		}
+		e.envoyListenerLock.Unlock()
 	}
+	err = dao.DeleteResource(daoResource)
+	if err != nil {
+		klog.Errorf("delete secret failed,%s", msgDebugInfo(&message))
+		return err
+	}
+	return nil
 }
 
 func (e *envoyControlPlane) process(message model.Message) {
