@@ -16,6 +16,7 @@
 package envoyingresscontroller
 
 import (
+	"encoding/base64"
 	"fmt"
 	"reflect"
 	"sort"
@@ -23,6 +24,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/golang/protobuf/proto"
 
 	envoy_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	envoy_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -1946,9 +1949,15 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
 		}
+		secretpb, err := proto.Marshal(&secret.Secret)
+		if err != nil {
+			klog.Warningf("failed to marshal secret into protobuf bytes, err: %s", err)
+			return err
+		}
+		content := base64.StdEncoding.EncodeToString(secretpb)
 		msg := model.NewMessage("").SetResourceVersion(secret.ResourceVersion).
 			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, opr).
-			FillBody(secret)
+			FillBody(content)
 		err = eic.messageLayer.Send(*msg)
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
@@ -1967,9 +1976,15 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
 		}
+		endpointpb, err := proto.Marshal(&endpoint.ClusterLoadAssignment)
+		if err != nil {
+			klog.Warningf("failed to marshal endpoint into protobuf bytes, err: %s", err)
+			return err
+		}
+		content := base64.StdEncoding.EncodeToString(endpointpb)
 		msg := model.NewMessage("").SetResourceVersion(endpoint.ResourceVersion).
 			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, opr).
-			FillBody(endpoint)
+			FillBody(content)
 		err = eic.messageLayer.Send(*msg)
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
@@ -1988,9 +2003,15 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
 		}
+		clusterpb, err := proto.Marshal(&cluster.Cluster)
+		if err != nil {
+			klog.Warningf("failed to marshal cluster into protobuf bytes, err: %s", err)
+			return err
+		}
+		content := base64.StdEncoding.EncodeToString(clusterpb)
 		msg := model.NewMessage("").SetResourceVersion(cluster.ResourceVersion).
 			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, opr).
-			FillBody(cluster)
+			FillBody(content)
 		err = eic.messageLayer.Send(*msg)
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
@@ -2009,9 +2030,15 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
 		}
+		routepb, err := proto.Marshal(&route.RouteConfiguration)
+		if err != nil {
+			klog.Warningf("failed to marshal route into protobuf bytes, err: %v", err)
+			return err
+		}
+		content := base64.StdEncoding.EncodeToString(routepb)
 		msg := model.NewMessage("").SetResourceVersion(route.ResourceVersion).
 			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, opr).
-			FillBody(route)
+			FillBody(content)
 		err = eic.messageLayer.Send(*msg)
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
@@ -2030,9 +2057,15 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
 		}
+		listenerpb, err := proto.Marshal(&listener.Listener)
+		if err != nil {
+			klog.Warningf("failed to marshal listener into protobuf bytes, err: %v", err)
+			return err
+		}
+		content := base64.StdEncoding.EncodeToString(listenerpb)
 		msg := model.NewMessage("").SetResourceVersion(listener.ResourceVersion).
 			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, opr).
-			FillBody(listener)
+			FillBody(content)
 		err = eic.messageLayer.Send(*msg)
 		if err != nil {
 			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
