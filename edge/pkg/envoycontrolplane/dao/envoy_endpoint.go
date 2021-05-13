@@ -6,6 +6,7 @@ import (
 )
 
 type Endpoint struct {
+	ID    string `orm:"column(id); size(64); pk"`
 	Name  string `orm:"column(name);null;type(text)";pk`
 	Value string `orm:"column(Value);null;type(text)"`
 }
@@ -30,7 +31,7 @@ func UpdateEndpoint(endpoint *Endpoint) error {
 }
 
 func InsertOrUpdateEndpoint(endpoint *Endpoint) error {
-	_, err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)", endpoint.Name, endpoint.Value).Exec()
+	_, err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO endpoint (name, value) VALUES (?,?)", endpoint.Name, endpoint.Value).Exec()
 	klog.V(4).Infof("update result %v", err)
 	return err
 }

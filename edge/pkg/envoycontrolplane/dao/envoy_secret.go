@@ -6,6 +6,7 @@ import (
 )
 
 type Secret struct {
+	ID    string `orm:"column(id); size(64); pk"`
 	Name  string `orm:"column(name);null;type(text)";pk`
 	Value string `orm:"column(Value);null;type(text)"`
 }
@@ -30,7 +31,7 @@ func UpdateSecret(secret *Secret) error {
 }
 
 func InsertOrUpdateSecret(secret *Secret) error {
-	_, err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO cluster (name, value) VALUES (?,?)", secret.Name, secret.Value).Exec()
+	_, err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO secret (name, value) VALUES (?,?)", secret.Name, secret.Value).Exec()
 	klog.V(4).Infof("update result %v", err)
 	return err
 }

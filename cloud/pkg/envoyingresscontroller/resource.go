@@ -1,4 +1,4 @@
-package envoycontrolplane
+package envoyingresscontroller
 
 import (
 	envoy_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
@@ -8,14 +8,12 @@ import (
 	envoy_tls_v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
 )
 
-type NodeGroup string
-
 type EnvoySecret struct {
-	Name            string              `json:"name,omitempty"`
-	Namespace       string              `json:"namespace,omitempty"`
-	ResourceVersion string              `json:"resourceVersion,omitempty"`
-	NodeGroup       []NodeGroup         `json:"-"`
-	Secret          envoy_tls_v3.Secret `json:"secret,omitempty"`
+	Name            string      `json:"name,omitempty"`
+	Namespace       string      `json:"namespace,omitempty"`
+	ResourceVersion string      `json:"resourceVersion,omitempty"`
+	NodeGroup       []NodeGroup `json:"-"`
+	Secret          envoy_tls_v3.Secret
 }
 
 type EnvoyEndpoint struct {
