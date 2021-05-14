@@ -41,7 +41,7 @@ func (lc *LocationCache) IsEdgeNode(nodeName string) bool  {
 	return ok
 }
 
-func (lc *LocationCache) GetNdoeStatus(nodeName string) (string,bool)  {
+func (lc *LocationCache) GetNodeStatus(nodeName string) (string,bool)  {
 	value , ok := lc.EdgeNodes.Load(nodeName)
 	status , ok := value.(string)
 	return status , ok
@@ -60,10 +60,12 @@ func (lc *LocationCache) UpdateEdgeNode(node *v1.Node) {
 
 }
 
-func (lc *LocationCache) DeleteNode(node *v1.Node) {
+func (lc *LocationCache) DeleteEdgeNode(node *v1.Node) {
 	nodeName := node.ObjectMeta.Name
 	lc.EdgeNodes.Delete(nodeName)
+}
 
+func (lc *LocationCache) DeleteNodeGroup(node *v1.Node){
 	if len(node.Labels[constants.NODEGROUPLABEL]) != 0 {
 		lc.ngLock.Lock()
 		defer lc.ngLock.Unlock()
@@ -88,6 +90,23 @@ func (lc *LocationCache) DeleteNode(node *v1.Node) {
 						nodeList = append(nodeList, nodeName)
 					}
 					lc.Group2node[nodeGroup] = nodeList
+				}
+			}
+		}
+	}
+}
+
+func (lc *LocationCache) UpdateNodeGroup(node *v1.Node){
+	if node.Labels != nil {
+		if len(node.Labels[constants.NODEGROUPLABEL]) != 0 {
+			lc.ngLock.Lock()
+			defer lc.ngLock.Unlock()
+			nodegroup := strings.Split(node.Labels[constants.NODEGROUPLABEL], ";")
+			for _, v := range nodegroup {
+				if len(v) != 0 {
+					nodeGroup := NodeGroup(v)
+					lc.Node2group[node.Name] = append(lc.Node2group[node.Name], nodeGroup)
+					lc.Group2node[nodeGroup] = append(lc.Group2node[nodeGroup], node.Name)
 				}
 			}
 		}

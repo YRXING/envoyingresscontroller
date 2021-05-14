@@ -144,8 +144,6 @@ const (
 
 type HTTPVersionType = http.HttpConnectionManager_CodecType
 
-// NodeGroup represents a node group which should be unique
-type NodeGroup string
 
 //KubeedgeClient is used for sending message to and from cloudhub.
 //It's communication is based upon beehive.
@@ -177,16 +175,6 @@ type EnvoyIngressController struct {
 	// To allow injection for testing.
 	syncHandler func(key string) error
 
-	// node2group saves the 1 to n relationship of a node's groups
-	// So a node can join not only one node group
-	// Because the label in k8s is map[string]string, the nodegroup label can only contain one string.
-	// In case a node belongs to more than one group, the groups should be separated by ; signal.
-	// For example, node A belongs to nodegroup x and y, and its nodegroup label can be in the format: nodegroup: a;b
-	node2group map[string][]NodeGroup
-	//group2node save2 the 1 to n relationship of a group's node members
-	group2node map[NodeGroup][]string
-	// The lock is used for protecting write operations to node2group and group2node
-	lock sync.RWMutex
 
 	lc *envoy_cache.LocationCache
 
@@ -242,7 +230,7 @@ type EnvoyIngressController struct {
 	ingressToResourceNameStore     map[string][]EnvoyResource
 	ingressToResourceNameStoreLock sync.RWMutex
 	// ingressNodeGroupStore saves the nodegroups which the ingress belongs to
-	ingressNodeGroupStore     map[string][]NodeGroup
+	ingressNodeGroupStore     map[string][]envoy_cache.NodeGroup
 	ingressNodeGroupStoreLock sync.RWMutex
 	// messageLayer is responsible for sending messages to cloudhub
 	messageLayer messagelayer.MessageLayer
@@ -252,15 +240,15 @@ type EnvoyIngressController struct {
 }
 
 func initializeFields(eic *EnvoyIngressController) {
-	eic.node2group = make(map[string][]NodeGroup)
-	eic.group2node = make(map[NodeGroup][]string)
+	eic.lc.Node2group = make(map[string][]envoy_cache.NodeGroup)
+	eic.lc.Group2node = make(map[envoy_cache.NodeGroup][]string)
 	eic.secretStore = make(map[string]*EnvoySecret)
 	eic.endpointStore = make(map[string]*EnvoyEndpoint)
 	eic.clusterStore = make(map[string]*EnvoyCluster)
 	eic.routeStore = make(map[string]*EnvoyRoute)
 	eic.listenerStore = make(map[string]*EnvoyListener)
 	eic.ingressToResourceNameStore = make(map[string][]EnvoyResource)
-	eic.ingressNodeGroupStore = make(map[string][]NodeGroup)
+	eic.ingressNodeGroupStore = make(map[string][]envoy_cache.NodeGroup)
 }
 
 // NewEnvoyIngressController creates a new EnvoyIngressController
@@ -409,7 +397,7 @@ func (eic *EnvoyIngressController) addIngress(obj interface{}) {
 	defer eic.ingressNodeGroupStoreLock.Unlock()
 	for _, v := range nodegroup {
 		if len(v) != 0 {
-			eic.ingressNodeGroupStore[key] = append(eic.ingressNodeGroupStore[key], NodeGroup(v))
+			eic.ingressNodeGroupStore[key] = append(eic.ingressNodeGroupStore[key], envoy_cache.NodeGroup(v))
 		}
 	}
 	klog.V(4).Infof("Adding envoy ingress %s", ingress.Name)
@@ -587,20 +575,7 @@ func serviceBackendPort(port intstr.IntOrString) ingressv1.ServiceBackendPort {
 // addNode updates the node2group and group2node map.
 func (eic *EnvoyIngressController) addNode(obj interface{}) {
 	node := obj.(*v1.Node)
-	if node.Labels != nil {
-		if len(node.Labels[NODEGROUPLABEL]) != 0 {
-			eic.lock.Lock()
-			defer eic.lock.Unlock()
-			nodegroup := strings.Split(node.Labels[NODEGROUPLABEL], ";")
-			for _, v := range nodegroup {
-				if len(v) != 0 {
-					nodeGroup := NodeGroup(v)
-					eic.node2group[node.Name] = append(eic.node2group[node.Name], nodeGroup)
-					eic.group2node[nodeGroup] = append(eic.group2node[nodeGroup], node.Name)
-				}
-			}
-		}
-	}
+	eic.lc.UpdateNodeGroup(node)
 
 	var nstatus string
 	for _,nsc := range node.Status.Conditions {
@@ -608,7 +583,7 @@ func (eic *EnvoyIngressController) addNode(obj interface{}) {
 			continue
 		}
 		nstatus = string(nsc.Status)
-		status,_ := eic.lc.GetNdoeStatus(node.ObjectMeta.Name)
+		status,_ := eic.lc.GetNodeStatus(node.ObjectMeta.Name)
 		eic.lc.UpdateEdgeNode(node)
 		if nsc.Status != v1.ConditionTrue || status == nstatus{
 			continue
@@ -623,6 +598,11 @@ func (eic *EnvoyIngressController) updateNode(old, cur interface{}) {
 	oldNode := old.(*v1.Node)
 	curNode := cur.(*v1.Node)
 
+	if curNode.Labels[NODEGROUPLABEL] != oldNode.Labels[NODEGROUPLABEL] {
+		eic.lc.DeleteNodeGroup(oldNode)
+		eic.lc.UpdateNodeGroup(curNode)
+	}
+
 	var nstatus string
 
 	for _,nsc := range curNode.Status.Conditions {
@@ -630,7 +610,7 @@ func (eic *EnvoyIngressController) updateNode(old, cur interface{}) {
 			continue
 		}
 		nstatus = string(nsc.Status)
-		status,_ := eic.lc.GetNdoeStatus(curNode.ObjectMeta.Name)
+		status,_ := eic.lc.GetNodeStatus(curNode.ObjectMeta.Name)
 		eic.lc.UpdateEdgeNode(curNode)
 		if nsc.Status != v1.ConditionTrue || status == nstatus{
 			continue
@@ -638,11 +618,6 @@ func (eic *EnvoyIngressController) updateNode(old, cur interface{}) {
 		eic.syncAllResourcesToEdgeNodes(curNode)
 	}
 
-
-	if curNode.Labels[NODEGROUPLABEL] != oldNode.Labels[NODEGROUPLABEL] {
-		eic.deleteNode(oldNode)
-		eic.addNode(curNode)
-	}
 }
 
 // deleteNode updates the node2group and group2node map.
@@ -661,34 +636,8 @@ func (eic *EnvoyIngressController) deleteNode(obj interface{}) {
 			return
 		}
 	}
-
-	if len(node.Labels[NODEGROUPLABEL]) != 0 {
-		eic.lock.Lock()
-		defer eic.lock.Unlock()
-		nodegroup := strings.Split(node.Labels[NODEGROUPLABEL], ";")
-		// Ensure that the node has been recorded in nodegroup relationship
-		if _, ok = eic.node2group[node.Name]; ok {
-			delete(eic.node2group, node.Name)
-		}
-		for _, v := range nodegroup {
-			//delete the old relationship between this node and group
-			if len(v) != 0 {
-				nodeGroup := NodeGroup(v)
-				if _, ok = eic.group2node[nodeGroup]; ok {
-					var nodeList = make([]string, 0, 10)
-					for _, nodeName := range eic.group2node[nodeGroup] {
-						if nodeName == node.Name {
-							continue
-						}
-						nodeList = append(nodeList, nodeName)
-					}
-					eic.group2node[nodeGroup] = nodeList
-				}
-			}
-		}
-	}
-
-	eic.lc.DeleteNode(node)
+	eic.lc.DeleteNodeGroup(node)
+	eic.lc.DeleteEdgeNode(node)
 }
 
 // When a service is added, figure out what ingresses potentially match it.
@@ -870,14 +819,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 
 	klog.Infof("succeeded in initiate local cache")
 
-
-	err = eic.initiateNodeGroupsWithNodes()
-	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("fail to initiate nodegroup and node relation"))
-		return
-	}
-
-	klog.Infof("succeeded in initiate nodegroups with nodes")
 
 	err = eic.initiateEnvoyResources()
 	if err != nil {
@@ -1194,12 +1135,12 @@ func (eic *EnvoyIngressController) getIngressesForSecret(secret *v1.Secret) []*i
 	return ingresses
 }
 
-func getNodeGroupForIngress(ingress *ingressv1.Ingress) ([]NodeGroup, error) {
-	var nodegroup []NodeGroup
+func getNodeGroupForIngress(ingress *ingressv1.Ingress) ([]envoy_cache.NodeGroup, error) {
+	var nodegroup []envoy_cache.NodeGroup
 	nodeGroupStrings := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
 	for _, nodeGroupString := range nodeGroupStrings {
 		if len(nodeGroupString) != 0 {
-			nodegroup = append(nodegroup, NodeGroup(nodeGroupString))
+			nodegroup = append(nodegroup, envoy_cache.NodeGroup(nodeGroupString))
 		}
 	}
 	if len(nodegroup) == 0 {
@@ -1749,7 +1690,7 @@ func (eic *EnvoyIngressController) consumer() {
 	envoyResource := eic.resourceNeedToBeSentToEdgeStore[0]
 	eic.resourceNeedToBeSentToEdgeStore = eic.resourceNeedToBeSentToEdgeStore[1:]
 	eic.resourceNeedToBeSentToEdgeStoreLock.Unlock()
-	var nodegroup []NodeGroup
+	var nodegroup []envoy_cache.NodeGroup
 	switch envoyResource.Kind {
 	case SECRET:
 		eic.secretStoreLock.RLock()
@@ -1800,7 +1741,7 @@ func (eic *EnvoyIngressController) consumer() {
 	klog.Infof("dispatch to node")
 	nodesToSend := make(map[string]bool)
 	for _, v := range nodegroup {
-		for _, node := range eic.group2node[v] {
+		for _, node := range eic.lc.Group2node[v] {
 			nodesToSend[node] = true
 		}
 	}
@@ -1827,12 +1768,12 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		v1beta1Ingress, err := eic.v1beta1IngressLister.Ingresses(namespace).Get(name)
 		if errors.IsNotFound(err) {
 			klog.V(4).Infof("ingress has been deleted %v", key)
-			eic.lock.Lock()
+			eic.ingressNodeGroupStoreLock.Lock()
 			nodegroup := eic.ingressNodeGroupStore[key]
-			eic.lock.Unlock()
+			eic.ingressNodeGroupStoreLock.Unlock()
 			var nodesToSend map[string]bool
 			for _, v := range nodegroup {
-				for _, node := range eic.group2node[v] {
+				for _, node := range eic.lc.Group2node[v] {
 					nodesToSend[node] = true
 				}
 			}
@@ -1884,7 +1825,7 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	nodegroup := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
 	for _, v := range nodegroup {
 		if len(v) != 0 {
-			eic.ingressNodeGroupStore[key] = append(eic.ingressNodeGroupStore[key], NodeGroup(v))
+			eic.ingressNodeGroupStore[key] = append(eic.ingressNodeGroupStore[key], envoy_cache.NodeGroup(v))
 		}
 	}
 	// TODO: the following code need to consider whether the resource needs to be sent
@@ -2194,30 +2135,6 @@ func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}){
 }
 
 
-// initiateNodeGroupsWithNodes should be called first when the controller begins to run.
-// It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
-func (eic *EnvoyIngressController) initiateNodeGroupsWithNodes() error {
-	set := labels.Set{"node-role.kubernetes.io/edge":""}
-	selector := labels.SelectorFromSet(set)
-	nodeList, err := eic.nodeLister.List(selector)
-	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("cloudn't get clusters's node list"))
-		return err
-	}
-
-	for _, node := range nodeList {
-		nodegroup := strings.Split(node.Labels[NODEGROUPLABEL], ";")
-		for _, v := range nodegroup {
-			if len(v) != 0 {
-				nodeGroup := NodeGroup(v)
-				eic.node2group[node.Name] = append(eic.node2group[node.Name], nodeGroup)
-				eic.group2node[nodeGroup] = append(eic.group2node[nodeGroup], node.Name)
-			}
-		}
-	}
-	return nil
-}
-
 // initiateEnvoyResources generates all the corresponding envoy resources for envoy ingress
 // It should be called first when envoy ingress controller starts to run.
 func (eic *EnvoyIngressController) initiateEnvoyResources() error {
@@ -2247,7 +2164,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 		nodegroup := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
 		for _, v := range nodegroup {
 			if len(v) != 0 {
-				eic.ingressNodeGroupStore[key] = append(eic.ingressNodeGroupStore[key], NodeGroup(v))
+				eic.ingressNodeGroupStore[key] = append(eic.ingressNodeGroupStore[key], envoy_cache.NodeGroup(v))
 			}
 		}
 		secrets, _ := eic.getSecretsForIngress(ingress)
@@ -2316,14 +2233,9 @@ func (eic *EnvoyIngressController) initCache() error {
 	}
 
 	for _, node := range nodeList {
-		nodegroup := strings.Split(node.Labels[NODEGROUPLABEL], ";")
-		for _, v := range nodegroup {
-			if len(v) != 0 {
-				nodeGroup := envoy_cache.NodeGroup(v)
-				eic.lc.Node2group[node.Name] = append(eic.lc.Node2group[node.Name], nodeGroup)
-				eic.lc.Group2node[nodeGroup] = append(eic.lc.Group2node[nodeGroup], node.Name)
-			}
-		}
+		// initiateNodeGroupsWithNodes should be called first when the controller begins to run.
+		// It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
+		eic.lc.UpdateNodeGroup(node)
 		eic.lc.UpdateEdgeNode(node)
 	}
 
