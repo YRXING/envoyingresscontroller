@@ -6,45 +6,46 @@ import (
 	envoy_listener_v3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	envoy_route_v3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	envoy_tls_v3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
 )
 
 type EnvoySecret struct {
-	Name            string      `json:"name,omitempty"`
-	Namespace       string      `json:"namespace,omitempty"`
-	ResourceVersion string      `json:"resourceVersion,omitempty"`
-	NodeGroup       []NodeGroup `json:"-"`
+	Name            string                  `json:"name,omitempty"`
+	Namespace       string                  `json:"namespace,omitempty"`
+	ResourceVersion string                  `json:"resourceVersion,omitempty"`
+	NodeGroup       []envoy_cache.NodeGroup `json:"-"`
 	Secret          envoy_tls_v3.Secret
 }
 
 type EnvoyEndpoint struct {
-	Name                  string      `json:"name,omitempty"`
-	Namespace             string      `json:"namespace,omitempty"`
-	ResourceVersion       string      `json:"resourceVersion,omitempty"`
-	NodeGroup             []NodeGroup `json:"-"`
+	Name                  string                  `json:"name,omitempty"`
+	Namespace             string                  `json:"namespace,omitempty"`
+	ResourceVersion       string                  `json:"resourceVersion,omitempty"`
+	NodeGroup             []envoy_cache.NodeGroup `json:"-"`
 	ClusterLoadAssignment envoy_endpoint_v3.ClusterLoadAssignment
 }
 
 type EnvoyCluster struct {
-	Name            string      `json:"name,omitempty"`
-	Namespace       string      `json:"namespace,omitempty"`
-	ResourceVersion string      `json:"resourceVersion,omitempty"`
-	NodeGroup       []NodeGroup `json:"-"`
+	Name            string                  `json:"name,omitempty"`
+	Namespace       string                  `json:"namespace,omitempty"`
+	ResourceVersion string                  `json:"resourceVersion,omitempty"`
+	NodeGroup       []envoy_cache.NodeGroup `json:"-"`
 	Cluster         envoy_cluster_v3.Cluster
 }
 
 type EnvoyRoute struct {
-	Name               string      `json:"name,omitempty"`
-	Namespace          string      `json:"namespace,omitempty"`
-	ResourceVersion    string      `json:"resourceVersion,omitempty"`
-	NodeGroup          []NodeGroup `json:"-"`
+	Name               string                  `json:"name,omitempty"`
+	Namespace          string                  `json:"namespace,omitempty"`
+	ResourceVersion    string                  `json:"resourceVersion,omitempty"`
+	NodeGroup          []envoy_cache.NodeGroup `json:"-"`
 	RouteConfiguration envoy_route_v3.RouteConfiguration
 }
 
 type EnvoyListener struct {
-	Name            string      `json:"name,omitempty"`
-	Namespace       string      `json:"namespace,omitempty"`
-	ResourceVersion string      `json:"resourceVersion,omitempty"`
-	NodeGroup       []NodeGroup `json:"-"`
+	Name            string                  `json:"name,omitempty"`
+	Namespace       string                  `json:"namespace,omitempty"`
+	ResourceVersion string                  `json:"resourceVersion,omitempty"`
+	NodeGroup       []envoy_cache.NodeGroup `json:"-"`
 	Listener        envoy_listener_v3.Listener
 }
 

@@ -18,14 +18,15 @@ package envoyingresscontroller
 import (
 	"encoding/base64"
 	"fmt"
-	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
-	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/constants"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/constants"
 
 	"github.com/golang/protobuf/proto"
 
@@ -147,7 +148,6 @@ const (
 
 type HTTPVersionType = http.HttpConnectionManager_CodecType
 
-
 //KubeedgeClient is used for sending message to and from cloudhub.
 //It's communication is based upon beehive.
 type KubeedgeClient struct {
@@ -177,7 +177,6 @@ type EnvoyIngressController struct {
 
 	// To allow injection for testing.
 	syncHandler func(key string) error
-
 
 	lc *envoy_cache.LocationCache
 
@@ -243,6 +242,7 @@ type EnvoyIngressController struct {
 }
 
 func initializeFields(eic *EnvoyIngressController) {
+	eic.lc = &envoy_cache.LocationCache{}
 	eic.lc.Node2group = make(map[string][]envoy_cache.NodeGroup)
 	eic.lc.Group2node = make(map[envoy_cache.NodeGroup][]string)
 	eic.secretStore = make(map[string]*EnvoySecret)
@@ -581,14 +581,14 @@ func (eic *EnvoyIngressController) addNode(obj interface{}) {
 	eic.lc.UpdateNodeGroup(node)
 
 	var nstatus string
-	for _,nsc := range node.Status.Conditions {
+	for _, nsc := range node.Status.Conditions {
 		if nsc.Type != v1.NodeReady {
 			continue
 		}
 		nstatus = string(nsc.Status)
-		status,_ := eic.lc.GetNodeStatus(node.ObjectMeta.Name)
+		status, _ := eic.lc.GetNodeStatus(node.ObjectMeta.Name)
 		eic.lc.UpdateEdgeNode(node)
-		if nsc.Status != v1.ConditionTrue || status == nstatus{
+		if nsc.Status != v1.ConditionTrue || status == nstatus {
 			continue
 		}
 		eic.syncAllResourcesToEdgeNodes(node)
@@ -608,14 +608,14 @@ func (eic *EnvoyIngressController) updateNode(old, cur interface{}) {
 
 	var nstatus string
 
-	for _,nsc := range curNode.Status.Conditions {
+	for _, nsc := range curNode.Status.Conditions {
 		if nsc.Type != v1.NodeReady {
 			continue
 		}
 		nstatus = string(nsc.Status)
-		status,_ := eic.lc.GetNodeStatus(curNode.ObjectMeta.Name)
+		status, _ := eic.lc.GetNodeStatus(curNode.ObjectMeta.Name)
 		eic.lc.UpdateEdgeNode(curNode)
-		if nsc.Status != v1.ConditionTrue || status == nstatus{
+		if nsc.Status != v1.ConditionTrue || status == nstatus {
 			continue
 		}
 		eic.syncAllResourcesToEdgeNodes(curNode)
@@ -822,7 +822,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 
 	klog.Infof("succeeded in initiate local cache")
 
-
 	err = eic.initiateEnvoyResources()
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("fail to initiate envoy resources"))
@@ -842,8 +841,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	for i := 0; i < eic.envoyIngressControllerConfiguration.envoyServiceSyncWorkerNumber; i++ {
 		go wait.Until(eic.consumer, eic.envoyIngressControllerConfiguration.envoyServiceSyncInterval, stopCh)
 	}
-
-
 
 	<-stopCh
 }
@@ -1924,7 +1921,6 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	return nil
 }
 
-
 //TODO:restructrue send message model
 func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource, opr string, node string) error {
 	switch envoyResource.Kind {
@@ -2068,10 +2064,10 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 }
 
 //when node comes to running,send all the envoy resources to edge.
-func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}){
-	node ,ok := obj.(*v1.Node)
+func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}) {
+	node, ok := obj.(*v1.Node)
 	if !ok {
-		klog.Warningf("Object type %T unsupported",obj)
+		klog.Warningf("Object type %T unsupported", obj)
 		return
 	}
 
@@ -2167,7 +2163,6 @@ func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}){
 
 }
 
-
 // initiateEnvoyResources generates all the corresponding envoy resources for envoy ingress
 // It should be called first when envoy ingress controller starts to run.
 func (eic *EnvoyIngressController) initiateEnvoyResources() error {
@@ -2256,7 +2251,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 }
 
 func (eic *EnvoyIngressController) initCache() error {
-	set := labels.Set{constants.NodeRoleKey:constants.NodeRoleValue}
+	set := labels.Set{constants.NodeRoleKey: constants.NodeRoleValue}
 	selector := labels.SelectorFromSet(set)
 	nodeList, err := eic.nodeLister.List(selector)
 

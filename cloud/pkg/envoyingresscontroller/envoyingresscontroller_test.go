@@ -2,10 +2,13 @@ package envoyingresscontroller
 
 import (
 	"fmt"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/constants"
 	"math/rand"
 	"reflect"
 	"testing"
 	"time"
+
+	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
 
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
@@ -431,7 +434,8 @@ func syncAndValidateEnvoyIngress(manager *envoyIngressController, ingress *ingre
 func TestInitNodeGroupsWithNodes(t *testing.T) {
 	var (
 		nodeLabel = map[string]string{
-			"nodegroup": "guiyang",
+			"nodegroup":           "guiyang",
+			constants.NodeRoleKey: constants.NodeRoleValue,
 		}
 	)
 	config.InitConfigure(&v1alpha1.EnvoyIngressController{
@@ -446,11 +450,11 @@ func TestInitNodeGroupsWithNodes(t *testing.T) {
 		t.Fatalf("error creating EnvoyIngress controller: %v", err)
 	}
 	addNodes(manager.nodeStore, 0, 1, nodeLabel)
-	err = manager.EnvoyIngressController.initiateNodeGroupsWithNodes()
+	err = manager.EnvoyIngressController.initCache()
 	if err != nil {
 		t.Fatalf("Failed to initiate nodegroups with nodes, err: %v", err)
 	}
-	if string(manager.EnvoyIngressController.node2group["node-0"][0]) != "guiyang" || manager.EnvoyIngressController.group2node[NodeGroup("guiyang")][0] != "node-0" {
+	if string(manager.EnvoyIngressController.lc.Node2group["node-0"][0]) != "guiyang" || manager.EnvoyIngressController.lc.Group2node[envoy_cache.NodeGroup("guiyang")][0] != "node-0" {
 		t.Errorf("Fail to initiate nodegroup relationship")
 	}
 }
@@ -476,10 +480,10 @@ func TestAddNode(t *testing.T) {
 	node2 := newNode("node-1", nodeLabel)
 	manager.addNode(node1)
 	manager.addNode(node2)
-	if !reflect.DeepEqual(manager.EnvoyIngressController.node2group["node-0"], []NodeGroup{"guiyang", "shanxi"}) ||
-		!reflect.DeepEqual(manager.EnvoyIngressController.group2node[NodeGroup("guiyang")], []string{"node-0", "node-1"}) {
-		t.Errorf("Fail to add nodes to nodegroup, %v, %v", manager.EnvoyIngressController.node2group["node-0"],
-			manager.EnvoyIngressController.group2node[NodeGroup("guiyang")])
+	if !reflect.DeepEqual(manager.EnvoyIngressController.lc.Node2group["node-0"], []envoy_cache.NodeGroup{"guiyang", "shanxi"}) ||
+		!reflect.DeepEqual(manager.EnvoyIngressController.lc.Group2node[envoy_cache.NodeGroup("guiyang")], []string{"node-0", "node-1"}) {
+		t.Errorf("Fail to add nodes to nodegroup, %v, %v", manager.EnvoyIngressController.lc.Node2group["node-0"],
+			manager.EnvoyIngressController.lc.Group2node[envoy_cache.NodeGroup("guiyang")])
 	}
 }
 
@@ -505,8 +509,8 @@ func TestUpdateNode(t *testing.T) {
 	curNode.Labels = map[string]string{"nodegroup": "zhejiang"}
 	manager.addNode(oldNode)
 	manager.updateNode(oldNode, curNode)
-	if !reflect.DeepEqual(manager.EnvoyIngressController.node2group["node-0"], []NodeGroup{"zhejiang"}) {
-		t.Errorf("Fail to update nodes to nodegroup, %v", manager.EnvoyIngressController.group2node["zhejiang"])
+	if !reflect.DeepEqual(manager.EnvoyIngressController.lc.Node2group["node-0"], []envoy_cache.NodeGroup{"zhejiang"}) {
+		t.Errorf("Fail to update nodes to nodegroup, %v", manager.EnvoyIngressController.lc.Group2node["zhejiang"])
 	}
 }
 
@@ -530,8 +534,8 @@ func TestDeleteNode(t *testing.T) {
 	node := newNode("node-0", nodeLabel)
 	manager.addNode(node)
 	manager.deleteNode(node)
-	if len(manager.node2group["node-0"]) != 0 || len(manager.group2node["guiyang"]) != 0 ||
-		len(manager.group2node["shanxi"]) != 0 {
+	if len(manager.lc.Node2group["node-0"]) != 0 || len(manager.lc.Group2node["guiyang"]) != 0 ||
+		len(manager.lc.Group2node["shanxi"]) != 0 {
 		t.Errorf("Fail to delete nodes from nodegroup")
 	}
 }
@@ -1327,8 +1331,8 @@ func TestGetNodeGroupForIngress(t *testing.T) {
 	if len(nodegroups) == 0 {
 		t.Fatalf("failed to get nodegroups for ingress %s in namespace %s", ingress.Name, ingress.Namespace)
 	}
-	if !reflect.DeepEqual(nodegroups, []NodeGroup{NodeGroup("guiyang"), NodeGroup("shanxi"), NodeGroup("zhejiang")}) {
-		t.Fatalf("expected %v, got %v", []NodeGroup{NodeGroup("guiyang"), NodeGroup("shanxi"), NodeGroup("zhejiang")}, nodegroups)
+	if !reflect.DeepEqual(nodegroups, []envoy_cache.NodeGroup{envoy_cache.NodeGroup("guiyang"), envoy_cache.NodeGroup("shanxi"), envoy_cache.NodeGroup("zhejiang")}) {
+		t.Fatalf("expected %v, got %v", []envoy_cache.NodeGroup{envoy_cache.NodeGroup("guiyang"), envoy_cache.NodeGroup("shanxi"), envoy_cache.NodeGroup("zhejiang")}, nodegroups)
 	}
 }
 
@@ -1494,7 +1498,7 @@ func TestInitEnvoyEnvoyResources(t *testing.T) {
 		}
 	}
 	addSecrets(manager.secretStore, 1)
-	err = manager.initiateNodeGroupsWithNodes()
+	err = manager.initCache()
 	if err != nil {
 		t.Fatalf("error initing nodegroup relationship: %v", err)
 	}
