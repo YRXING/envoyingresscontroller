@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	keinformers "github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
 	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/constants"
 
@@ -58,7 +59,6 @@ import (
 	ingressv1 "k8s.io/api/networking/v1"
 	v1beta1Ingressv1 "k8s.io/api/networking/v1beta1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	networkingInformers "k8s.io/client-go/informers/networking/v1"
 	v1beta1networkInformers "k8s.io/client-go/informers/networking/v1beta1"
@@ -281,6 +281,7 @@ func NewEnvoyIngressController(
 		envoyIngressControllerConfiguration: envoyIngressControllerConfiguration,
 		queue:                               workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress"),
 	}
+
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    eic.addIngress,
 		UpdateFunc: eic.updateIngress,
@@ -345,7 +346,7 @@ func Register(eic *v1alpha1.EnvoyIngressController) {
 	config.InitConfigure(eic)
 	// Get clientSet from keclient package
 	kubeClient := keclient.GetKubeClient()
-	sharedInformers := informers.NewSharedInformerFactory(kubeClient, time.Minute)
+	sharedInformers := keinformers.GetInformersManager().GetK8sInformerFactory()
 	endpointInformer := sharedInformers.Core().V1().Endpoints()
 	secretInformer := sharedInformers.Core().V1().Secrets()
 	ingressInformer := sharedInformers.Networking().V1().Ingresses()
@@ -359,7 +360,10 @@ func Register(eic *v1alpha1.EnvoyIngressController) {
 		envoyServiceSyncWorkerNumber: eic.EnvoyServiceSyncWorkerNumber,
 	}
 	// TODO: deal with error
-	envoyIngresscontroller, _ := NewEnvoyIngressController(secretInformer, endpointInformer, ingressInformer, v1beta1IngressInformer, nodeInformer, serviceInformer, envoyIngressControllerConfiguration, kubeClient, eic.Enable)
+	envoyIngresscontroller, err := NewEnvoyIngressController(secretInformer, endpointInformer, ingressInformer, v1beta1IngressInformer, nodeInformer, serviceInformer, envoyIngressControllerConfiguration, kubeClient, eic.Enable)
+	if err != nil {
+		klog.Errorf("failed to create envoy ingress controller, err: %v", err)
+	}
 	core.Register(envoyIngresscontroller)
 }
 
@@ -807,7 +811,7 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	klog.Infof("Starting envoy ingress controller")
 	defer klog.Infof("Shutting down envoy ingress controller")
 
-	if !cache.WaitForNamedCacheSync("envoy ingress", stopCh, eic.endpointStoreSynced, eic.nodeStoreSynced, eic.serviceStoreSynced, eic.ingressStoreSynced) {
+	if !cache.WaitForNamedCacheSync("envoy ingress", stopCh, eic.endpointStoreSynced, eic.nodeStoreSynced, eic.serviceStoreSynced, eic.ingressStoreSynced, eic.v1beta1IngressStoreSynced, eic.secretStoreSynced) {
 		return
 	}
 
@@ -1818,9 +1822,9 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		}
 		ingress = toV1Ingress(v1beta1Ingress)
 	}
-	if err != nil {
-		return fmt.Errorf("unable to retrieve ingress %v from store: %v", key, err)
-	}
+	//if err != nil {
+	//	return fmt.Errorf("unable to retrieve ingress %v from store: %v", key, err)
+	//}
 
 	nodegroup := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
 	for _, v := range nodegroup {
