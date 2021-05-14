@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	controller "github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
@@ -88,11 +89,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 	content, err := generateContent(message)
 	if err != nil {
 		klog.Errorf("insert message failed, %s", msgDebugInfo(&message))
+		return err
 	}
 	resKey, resType, _ := parseResource(message.GetResource())
 
 	//TODO: switch resTpe cluster/endpoint/listener/router/secret
-	envoyResourceString, err := base64.StdEncoding.DecodeString(string(content))
+	unquotedContent, err := strconv.Unquote(string(content))
+	if err != nil {
+		klog.Errorf("failed to unquote content, err: %v", err)
+		return err
+	}
+	envoyResourceString, err := base64.StdEncoding.DecodeString(unquotedContent)
 	if err != nil {
 		klog.Errorf("failed to decode base64 encoded content into %s, err: %v", resType, err)
 		return err
@@ -133,7 +140,7 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		daoResource = &dao.Secret{
 			ID:    resKey,
 			Name:  resKey,
-			Value: string(content),
+			Value: unquotedContent,
 		}
 	case string(ENDPOINT):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyEndpoint)).ClusterLoadAssignment))
@@ -147,7 +154,7 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		daoResource = &dao.Endpoint{
 			ID:    resKey,
 			Name:  resKey,
-			Value: string(content),
+			Value: unquotedContent,
 		}
 	case string(CLUSTER):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyCluster)).Cluster))
@@ -161,7 +168,7 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		daoResource = &dao.Cluster{
 			ID:    resKey,
 			Name:  resKey,
-			Value: string(content),
+			Value: unquotedContent,
 		}
 	case string(ROUTE):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyRoute)).RouteConfiguration))
@@ -175,7 +182,7 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		daoResource = &dao.Router{
 			ID:    resKey,
 			Name:  resKey,
-			Value: string(content),
+			Value: unquotedContent,
 		}
 	case string(LISTENER):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyListener)).Listener))
@@ -189,7 +196,7 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		daoResource = &dao.Listener{
 			ID:    resKey,
 			Name:  resKey,
-			Value: string(content),
+			Value: unquotedContent,
 		}
 	}
 	err = dao.InsertOrUpdateResource(daoResource)
@@ -207,8 +214,12 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 	}
 	resKey, resType, _ := parseResource(message.GetResource())
 
-	//TODO: switch resTpe cluster/endpoint/listener/router/
-	envoyResourceString, err := base64.StdEncoding.DecodeString(string(content))
+	unquotedContent, err := strconv.Unquote(string(content))
+	if err != nil {
+		klog.Errorf("failed to unquote content, err: %v", err)
+		return err
+	}
+	envoyResourceString, err := base64.StdEncoding.DecodeString(unquotedContent)
 	if err != nil {
 		klog.Errorf("failed to decode base64 encoded content into %s, err: %v", resType, err)
 		return err
@@ -247,6 +258,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 			delete(e.envoySecrets, envoyResource.GetName())
 		}
 		e.envoySecretLock.Unlock()
+		daoResource = &dao.Secret{
+			ID:   resKey,
+			Name: resKey,
+		}
 	case string(ENDPOINT):
 		err = json.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyEndpoint)).ClusterLoadAssignment))
 		if err != nil {
@@ -257,6 +272,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 			delete(e.envoyEndpoints, envoyResource.GetName())
 		}
 		e.envoyEndpointLock.Unlock()
+		daoResource = &dao.Endpoint{
+			ID:   resKey,
+			Name: resKey,
+		}
 	case string(CLUSTER):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyCluster)).Cluster))
 		if err != nil {
@@ -267,6 +286,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 			delete(e.envoyClusters, envoyResource.GetName())
 		}
 		e.envoyClusterLock.Unlock()
+		daoResource = &dao.Cluster{
+			ID:   resKey,
+			Name: resKey,
+		}
 	case string(ROUTE):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyRoute)).RouteConfiguration))
 		if err != nil {
@@ -277,6 +300,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 			delete(e.envoyRoutes, envoyResource.GetName())
 		}
 		e.envoyRouteLock.Unlock()
+		daoResource = &dao.Router{
+			ID:   resKey,
+			Name: resKey,
+		}
 	case string(LISTENER):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyListener)).Listener))
 		if err != nil {
@@ -287,6 +314,10 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 			delete(e.envoyListeners, envoyResource.GetName())
 		}
 		e.envoyListenerLock.Unlock()
+		daoResource = &dao.Listener{
+			ID:   resKey,
+			Name: resKey,
+		}
 	}
 	err = dao.DeleteResource(daoResource)
 	if err != nil {
