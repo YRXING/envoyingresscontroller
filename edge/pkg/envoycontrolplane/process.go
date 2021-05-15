@@ -42,16 +42,7 @@ func msgDebugInfo(message *model.Message) string {
 // return <reskey, restype, resid>
 func parseResource(resource string) (string, string, string) {
 	tokens := strings.Split(resource, "/")
-	resType := ""
-	resID := ""
-	switch len(tokens) {
-	case 2:
-		resType = tokens[len(tokens)-1]
-	default:
-		resType = tokens[len(tokens)-2]
-		resID = tokens[len(tokens)-1]
-	}
-	return resource, resType, resID
+	return resource, tokens[1], ""
 }
 
 func generateContent(message model.Message) ([]byte, error) {
@@ -204,6 +195,7 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		klog.Errorf("save meta failed, %s: %v", msgDebugInfo(&message), err)
 		return err
 	}
+	klog.Infof("insert envoy resource %v succeeded", daoResource)
 	return nil
 }
 
@@ -324,6 +316,7 @@ func (e *envoyControlPlane) processDelete(message model.Message) error {
 		klog.Errorf("delete secret failed,%s", msgDebugInfo(&message))
 		return err
 	}
+	klog.Infof("delete envoy resource %v succeeded", daoResource)
 	return nil
 }
 
@@ -331,9 +324,13 @@ func (e *envoyControlPlane) process(message model.Message) {
 	operation := message.GetOperation()
 	switch operation {
 	case model.InsertOperation:
-		e.processInsert(message)
+		if err := e.processInsert(message); err != nil {
+			klog.Warningf("failed to insert message %v into database, err: %v", message, err)
+		}
 	case model.DeleteOperation:
-		e.processDelete(message)
+		if err := e.processDelete(message); err != nil {
+			klog.Warningf("failed to delete message %v from database, err: %v", message, err)
+		}
 	}
 }
 

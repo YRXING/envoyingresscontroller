@@ -2034,11 +2034,11 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 	case LISTENER:
 		listener, ok := eic.listenerStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("couldn't get route %s from route store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get listener %s from listener store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
-		resource, err := messagelayer.BuildResource(node, listener.Namespace, string(ROUTE), envoyResource.Name)
+		resource, err := messagelayer.BuildResource(node, listener.Namespace, string(LISTENER), envoyResource.Name)
 		if err != nil {
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
@@ -2071,95 +2071,49 @@ func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}) 
 	}
 
 	//send all secrets to edge
-	for name, secret := range eic.secretStore {
-		resource, err := messagelayer.BuildResource(node.Name, secret.Namespace, string(SECRET), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.secretStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: SECRET,
 		}
-		msg := model.NewMessage("").SetResourceVersion(secret.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(secret)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
 	//send all endpoints to the edge
-	for name, endpoint := range eic.endpointStore {
-		resource, err := messagelayer.BuildResource(node.Name, endpoint.Namespace, string(ENDPOINT), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.endpointStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: ENDPOINT,
 		}
-		msg := model.NewMessage("").SetResourceVersion(endpoint.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(endpoint)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
 	//send all clusters to the edge
-	for name, cluster := range eic.clusterStore {
-		resource, err := messagelayer.BuildResource(node.Name, cluster.Namespace, string(CLUSTER), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.clusterStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: CLUSTER,
 		}
-		msg := model.NewMessage("").SetResourceVersion(cluster.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(cluster)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
-	}
-
-	//send all listeners to the edge
-	for name, listener := range eic.listenerStore {
-		resource, err := messagelayer.BuildResource(node.Name, listener.Namespace, string(LISTENER), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
-		}
-		msg := model.NewMessage("").SetResourceVersion(listener.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(listener)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
 	//send all routes to the edge
-	for name, route := range eic.routeStore {
-		resource, err := messagelayer.BuildResource(node.Name, route.Namespace, string(ROUTE), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.routeStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: ROUTE,
 		}
-		msg := model.NewMessage("").SetResourceVersion(route.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(route)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
+	//send all listeners to the edge
+	for name, _ := range eic.listenerStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: LISTENER,
+		}
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
+	}
 }
 
 // initiateEnvoyResources generates all the corresponding envoy resources for envoy ingress
