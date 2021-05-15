@@ -29,7 +29,7 @@ func StartCloudHub(messageq *channelq.ChannelMessageQueue) {
 	}
 }
 
-func createTLSC onfig(ca, cert, key []byte) tls.Config {
+func createTLSConfig(ca, cert, key []byte) tls.Config {
 	// init certificate
 	pool := x509.NewCertPool()
 	ok := pool.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: certutil.CertificateBlockType, Bytes: ca}))
