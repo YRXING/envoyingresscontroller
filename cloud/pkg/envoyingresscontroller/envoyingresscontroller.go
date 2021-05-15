@@ -95,7 +95,7 @@ const (
 	INGRESSCLASSANNOTATION           = "kubernetes.io/ingress.class"
 
 	NODEGROUPLABEL = "nodegroup"
-	GROUPRESOURCE  = "resource"
+	GROUPRESOURCE  = "envoy"
 
 	//ENVOYMANAGEMENTSERVER is the name of the edge side envoy control plane
 	ENVOYMANAGEMENTSERVER = "envoymanagementserver"
@@ -624,7 +624,6 @@ func (eic *EnvoyIngressController) updateNode(old, cur interface{}) {
 		}
 		eic.syncAllResourcesToEdgeNodes(curNode)
 	}
-
 }
 
 // deleteNode updates the node2group and group2node map.
@@ -810,10 +809,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 
 	klog.Infof("Starting envoy ingress controller")
 	defer klog.Infof("Shutting down envoy ingress controller")
-
-	if !cache.WaitForNamedCacheSync("envoy ingress", stopCh, eic.endpointStoreSynced, eic.nodeStoreSynced, eic.serviceStoreSynced, eic.ingressStoreSynced, eic.v1beta1IngressStoreSynced, eic.secretStoreSynced) {
-		return
-	}
 
 	// TODO:when starting controller, first sync nodegroup relationship
 	// then generate envoy resources for all present ingresses
@@ -1742,7 +1737,6 @@ func (eic *EnvoyIngressController) consumer() {
 		eic.listenerStoreLock.RUnlock()
 		nodegroup = listener.NodeGroup
 	}
-	klog.Infof("dispatch to node")
 	nodesToSend := make(map[string]bool)
 	for _, v := range nodegroup {
 		for _, node := range eic.lc.Group2node[v] {
@@ -1750,6 +1744,7 @@ func (eic *EnvoyIngressController) consumer() {
 		}
 	}
 	for node := range nodesToSend {
+		klog.Infof("dispatch to node, resource: %v, node: %s", envoyResource, node)
 		err := eic.dispatchResource(&envoyResource, model.InsertOperation, node)
 		if err != nil {
 			klog.Warning(err)
@@ -2255,9 +2250,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 }
 
 func (eic *EnvoyIngressController) initCache() error {
-	set := labels.Set{constants.NodeRoleKey: constants.NodeRoleValue}
-	selector := labels.SelectorFromSet(set)
-	nodeList, err := eic.nodeLister.List(selector)
+	nodeList, err := eic.nodeLister.List(labels.Everything())
 
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("cloudn't get clusters's node list"))
@@ -2265,6 +2258,9 @@ func (eic *EnvoyIngressController) initCache() error {
 	}
 
 	for _, node := range nodeList {
+		if _, ok := node.Labels[constants.NODEGROUPLABEL]; !ok {
+			continue
+		}
 		// initiateNodeGroupsWithNodes should be called first when the controller begins to run.
 		// It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
 		eic.lc.UpdateNodeGroup(node)

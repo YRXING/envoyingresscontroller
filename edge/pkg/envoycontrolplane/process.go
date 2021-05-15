@@ -338,6 +338,7 @@ func (e *envoyControlPlane) process(message model.Message) {
 }
 
 func (e *envoyControlPlane) runEnvoyControlPlane() {
+	klog.Info("envoy control plane mainloop start")
 	for {
 		select {
 		case <-beehiveContext.Done():
@@ -345,8 +346,8 @@ func (e *envoyControlPlane) runEnvoyControlPlane() {
 			return
 		default:
 		}
-		if msg, err := beehiveContext.Receive(e.Name()); err != nil {
-			klog.V(2).Infof("get a message %+v", msg)
+		if msg, err := beehiveContext.Receive(e.Name()); err == nil {
+			klog.Infof("get a message %+v", msg)
 			e.process(msg)
 		} else {
 			klog.Errorf("get a message %+v: %v", msg, err)
