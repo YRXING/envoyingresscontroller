@@ -18,14 +18,16 @@ package envoyingresscontroller
 import (
 	"encoding/base64"
 	"fmt"
-	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
-	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/constants"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	keinformers "github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
+	envoy_cache "github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/cache"
+	"github.com/kubeedge/kubeedge/cloud/pkg/envoyingresscontroller/constants"
 
 	"github.com/golang/protobuf/proto"
 
@@ -57,7 +59,6 @@ import (
 	ingressv1 "k8s.io/api/networking/v1"
 	v1beta1Ingressv1 "k8s.io/api/networking/v1beta1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	networkingInformers "k8s.io/client-go/informers/networking/v1"
 	v1beta1networkInformers "k8s.io/client-go/informers/networking/v1beta1"
@@ -94,7 +95,7 @@ const (
 	INGRESSCLASSANNOTATION           = "kubernetes.io/ingress.class"
 
 	NODEGROUPLABEL = "nodegroup"
-	GROUPRESOURCE  = "resource"
+	GROUPRESOURCE  = "envoy"
 
 	//ENVOYMANAGEMENTSERVER is the name of the edge side envoy control plane
 	ENVOYMANAGEMENTSERVER = "envoymanagementserver"
@@ -147,7 +148,6 @@ const (
 
 type HTTPVersionType = http.HttpConnectionManager_CodecType
 
-
 //KubeedgeClient is used for sending message to and from cloudhub.
 //It's communication is based upon beehive.
 type KubeedgeClient struct {
@@ -177,7 +177,6 @@ type EnvoyIngressController struct {
 
 	// To allow injection for testing.
 	syncHandler func(key string) error
-
 
 	lc *envoy_cache.LocationCache
 
@@ -243,6 +242,7 @@ type EnvoyIngressController struct {
 }
 
 func initializeFields(eic *EnvoyIngressController) {
+	eic.lc = &envoy_cache.LocationCache{}
 	eic.lc.Node2group = make(map[string][]envoy_cache.NodeGroup)
 	eic.lc.Group2node = make(map[envoy_cache.NodeGroup][]string)
 	eic.secretStore = make(map[string]*EnvoySecret)
@@ -281,6 +281,7 @@ func NewEnvoyIngressController(
 		envoyIngressControllerConfiguration: envoyIngressControllerConfiguration,
 		queue:                               workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "envoyingress"),
 	}
+
 	ingressInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    eic.addIngress,
 		UpdateFunc: eic.updateIngress,
@@ -345,7 +346,7 @@ func Register(eic *v1alpha1.EnvoyIngressController) {
 	config.InitConfigure(eic)
 	// Get clientSet from keclient package
 	kubeClient := keclient.GetKubeClient()
-	sharedInformers := informers.NewSharedInformerFactory(kubeClient, time.Minute)
+	sharedInformers := keinformers.GetInformersManager().GetK8sInformerFactory()
 	endpointInformer := sharedInformers.Core().V1().Endpoints()
 	secretInformer := sharedInformers.Core().V1().Secrets()
 	ingressInformer := sharedInformers.Networking().V1().Ingresses()
@@ -359,7 +360,10 @@ func Register(eic *v1alpha1.EnvoyIngressController) {
 		envoyServiceSyncWorkerNumber: eic.EnvoyServiceSyncWorkerNumber,
 	}
 	// TODO: deal with error
-	envoyIngresscontroller, _ := NewEnvoyIngressController(secretInformer, endpointInformer, ingressInformer, v1beta1IngressInformer, nodeInformer, serviceInformer, envoyIngressControllerConfiguration, kubeClient, eic.Enable)
+	envoyIngresscontroller, err := NewEnvoyIngressController(secretInformer, endpointInformer, ingressInformer, v1beta1IngressInformer, nodeInformer, serviceInformer, envoyIngressControllerConfiguration, kubeClient, eic.Enable)
+	if err != nil {
+		klog.Errorf("failed to create envoy ingress controller, err: %v", err)
+	}
 	core.Register(envoyIngresscontroller)
 }
 
@@ -581,14 +585,14 @@ func (eic *EnvoyIngressController) addNode(obj interface{}) {
 	eic.lc.UpdateNodeGroup(node)
 
 	var nstatus string
-	for _,nsc := range node.Status.Conditions {
+	for _, nsc := range node.Status.Conditions {
 		if nsc.Type != v1.NodeReady {
 			continue
 		}
 		nstatus = string(nsc.Status)
-		status,_ := eic.lc.GetNodeStatus(node.ObjectMeta.Name)
+		status, _ := eic.lc.GetNodeStatus(node.ObjectMeta.Name)
 		eic.lc.UpdateEdgeNode(node)
-		if nsc.Status != v1.ConditionTrue || status == nstatus{
+		if nsc.Status != v1.ConditionTrue || status == nstatus {
 			continue
 		}
 		eic.syncAllResourcesToEdgeNodes(node)
@@ -608,19 +612,18 @@ func (eic *EnvoyIngressController) updateNode(old, cur interface{}) {
 
 	var nstatus string
 
-	for _,nsc := range curNode.Status.Conditions {
+	for _, nsc := range curNode.Status.Conditions {
 		if nsc.Type != v1.NodeReady {
 			continue
 		}
 		nstatus = string(nsc.Status)
-		status,_ := eic.lc.GetNodeStatus(curNode.ObjectMeta.Name)
+		status, _ := eic.lc.GetNodeStatus(curNode.ObjectMeta.Name)
 		eic.lc.UpdateEdgeNode(curNode)
-		if nsc.Status != v1.ConditionTrue || status == nstatus{
+		if nsc.Status != v1.ConditionTrue || status == nstatus {
 			continue
 		}
 		eic.syncAllResourcesToEdgeNodes(curNode)
 	}
-
 }
 
 // deleteNode updates the node2group and group2node map.
@@ -807,10 +810,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	klog.Infof("Starting envoy ingress controller")
 	defer klog.Infof("Shutting down envoy ingress controller")
 
-	if !cache.WaitForNamedCacheSync("envoy ingress", stopCh, eic.endpointStoreSynced, eic.nodeStoreSynced, eic.serviceStoreSynced, eic.ingressStoreSynced) {
-		return
-	}
-
 	// TODO:when starting controller, first sync nodegroup relationship
 	// then generate envoy resources for all present ingresses
 
@@ -821,7 +820,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	}
 
 	klog.Infof("succeeded in initiate local cache")
-
 
 	err = eic.initiateEnvoyResources()
 	if err != nil {
@@ -842,8 +840,6 @@ func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	for i := 0; i < eic.envoyIngressControllerConfiguration.envoyServiceSyncWorkerNumber; i++ {
 		go wait.Until(eic.consumer, eic.envoyIngressControllerConfiguration.envoyServiceSyncInterval, stopCh)
 	}
-
-
 
 	<-stopCh
 }
@@ -1741,7 +1737,6 @@ func (eic *EnvoyIngressController) consumer() {
 		eic.listenerStoreLock.RUnlock()
 		nodegroup = listener.NodeGroup
 	}
-	klog.Infof("dispatch to node")
 	nodesToSend := make(map[string]bool)
 	for _, v := range nodegroup {
 		for _, node := range eic.lc.Group2node[v] {
@@ -1749,6 +1744,7 @@ func (eic *EnvoyIngressController) consumer() {
 		}
 	}
 	for node := range nodesToSend {
+		klog.Infof("dispatch to node, resource: %v, node: %s", envoyResource, node)
 		err := eic.dispatchResource(&envoyResource, model.InsertOperation, node)
 		if err != nil {
 			klog.Warning(err)
@@ -1821,9 +1817,9 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		}
 		ingress = toV1Ingress(v1beta1Ingress)
 	}
-	if err != nil {
-		return fmt.Errorf("unable to retrieve ingress %v from store: %v", key, err)
-	}
+	//if err != nil {
+	//	return fmt.Errorf("unable to retrieve ingress %v from store: %v", key, err)
+	//}
 
 	nodegroup := strings.Split(ingress.Annotations[ENVOYINGRESSNODEGROUPANNOTATION], ";")
 	for _, v := range nodegroup {
@@ -1923,7 +1919,6 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	}
 	return nil
 }
-
 
 //TODO:restructrue send message model
 func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource, opr string, node string) error {
@@ -2039,11 +2034,11 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 	case LISTENER:
 		listener, ok := eic.listenerStore[envoyResource.Name]
 		if !ok {
-			err := fmt.Errorf("couldn't get route %s from route store", envoyResource.Name)
+			err := fmt.Errorf("couldn't get listener %s from listener store", envoyResource.Name)
 			utilruntime.HandleError(err)
 			return err
 		}
-		resource, err := messagelayer.BuildResource(node, listener.Namespace, string(ROUTE), envoyResource.Name)
+		resource, err := messagelayer.BuildResource(node, listener.Namespace, string(LISTENER), envoyResource.Name)
 		if err != nil {
 			klog.Warningf("built message resource failed with error: %s", err)
 			return err
@@ -2068,105 +2063,58 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *EnvoyResource
 }
 
 //when node comes to running,send all the envoy resources to edge.
-func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}){
-	node ,ok := obj.(*v1.Node)
+func (eic *EnvoyIngressController) syncAllResourcesToEdgeNodes(obj interface{}) {
+	node, ok := obj.(*v1.Node)
 	if !ok {
-		klog.Warningf("Object type %T unsupported",obj)
+		klog.Warningf("Object type %T unsupported", obj)
 		return
 	}
 
 	//send all secrets to edge
-	for name, secret := range eic.secretStore {
-		resource, err := messagelayer.BuildResource(node.Name, secret.Namespace, string(SECRET), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.secretStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: SECRET,
 		}
-		msg := model.NewMessage("").SetResourceVersion(secret.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(secret)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
 	//send all endpoints to the edge
-	for name, endpoint := range eic.endpointStore {
-		resource, err := messagelayer.BuildResource(node.Name, endpoint.Namespace, string(ENDPOINT), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.endpointStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: ENDPOINT,
 		}
-		msg := model.NewMessage("").SetResourceVersion(endpoint.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(endpoint)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
 	//send all clusters to the edge
-	for name, cluster := range eic.clusterStore {
-		resource, err := messagelayer.BuildResource(node.Name, cluster.Namespace, string(CLUSTER), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.clusterStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: CLUSTER,
 		}
-		msg := model.NewMessage("").SetResourceVersion(cluster.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(cluster)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
-	}
-
-	//send all listeners to the edge
-	for name, listener := range eic.listenerStore {
-		resource, err := messagelayer.BuildResource(node.Name, listener.Namespace, string(LISTENER), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
-		}
-		msg := model.NewMessage("").SetResourceVersion(listener.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(listener)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
 	//send all routes to the edge
-	for name, route := range eic.routeStore {
-		resource, err := messagelayer.BuildResource(node.Name, route.Namespace, string(ROUTE), name)
-		if err != nil {
-			klog.Warningf("built message resource failed with error: %s", err)
-			return
+	for name, _ := range eic.routeStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: ROUTE,
 		}
-		msg := model.NewMessage("").SetResourceVersion(route.ResourceVersion).
-			BuildRouter(ENVOYINGRESSCONTROLLERNAME, GROUPRESOURCE, resource, model.InsertOperation).
-			FillBody(route)
-		err = eic.messageLayer.Send(*msg)
-		if err != nil {
-			klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
-			return
-		}
-		klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
 	}
 
+	//send all listeners to the edge
+	for name, _ := range eic.listenerStore {
+		envoyResource := EnvoyResource{
+			Name: name,
+			Kind: LISTENER,
+		}
+		eic.dispatchResource(&envoyResource, model.InsertOperation, node.Name)
+	}
 }
-
 
 // initiateEnvoyResources generates all the corresponding envoy resources for envoy ingress
 // It should be called first when envoy ingress controller starts to run.
@@ -2256,9 +2204,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 }
 
 func (eic *EnvoyIngressController) initCache() error {
-	set := labels.Set{constants.NodeRoleKey:constants.NodeRoleValue}
-	selector := labels.SelectorFromSet(set)
-	nodeList, err := eic.nodeLister.List(selector)
+	nodeList, err := eic.nodeLister.List(labels.Everything())
 
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("cloudn't get clusters's node list"))
@@ -2266,6 +2212,9 @@ func (eic *EnvoyIngressController) initCache() error {
 	}
 
 	for _, node := range nodeList {
+		if _, ok := node.Labels[constants.NODEGROUPLABEL]; !ok {
+			continue
+		}
 		// initiateNodeGroupsWithNodes should be called first when the controller begins to run.
 		// It list all nodes in the cluster and read the labels of nodes to build relationship of node and there group.
 		eic.lc.UpdateNodeGroup(node)

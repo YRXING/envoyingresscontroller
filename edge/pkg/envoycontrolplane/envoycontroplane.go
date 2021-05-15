@@ -81,6 +81,8 @@ func newControlPlane(enable bool, xdsAddr, xdsPort, nodeName string) *envoyContr
 
 func Register(ecpc *v1alpha1.EnvoyControlPlaneConfig) {
 	controlplane := newControlPlane(ecpc.Enable, ecpc.XdsAddr, fmt.Sprintf("%d", ecpc.XdsPort), ecpc.NodeName)
+	// register db table
+	dao.InitDBTable(controlplane)
 	core.Register(controlplane)
 }
 
@@ -107,8 +109,6 @@ func (e *envoyControlPlane) Start() {
 			}
 		}
 	}()
-	// register db table
-	dao.InitDBTable(e)
 	go e.runEnvoyControlPlane()
 	// flush xdscache every minute
 	go wait.Until(e.FlushXDSCache, 60, beehiveContext.Done())

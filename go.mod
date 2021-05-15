@@ -83,6 +83,7 @@ replace (
 	github.com/apache/servicecomb-kie v0.1.0 => github.com/apache/servicecomb-kie v0.0.0-20190905062319-5ee098c8886f // indirect. TODO: remove this line when servicecomb-kie has a stable release
 	github.com/gopherjs/gopherjs v0.0.0 => github.com/gopherjs/gopherjs v0.0.0-20181103185306-d547d1d9531e // indirect
 	github.com/kubeedge/beehive => ./staging/src/github.com/kubeedge/beehive
+	github.com/kubeedge/kubeedge v0.0.0 => github.com/YRXING/envoyingresscontroller v0.0.0
 	github.com/kubeedge/viaduct => ./staging/src/github.com/kubeedge/viaduct
 	k8s.io/api v0.0.0 => k8s.io/api v0.19.3
 	k8s.io/apiextensions-apiserver v0.0.0 => k8s.io/apiextensions-apiserver v0.19.3
