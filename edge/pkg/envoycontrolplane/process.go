@@ -84,7 +84,6 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 	}
 	resKey, resType, _ := parseResource(message.GetResource())
 
-	//TODO: switch resTpe cluster/endpoint/listener/router/secret
 	unquotedContent, err := strconv.Unquote(string(content))
 	if err != nil {
 		klog.Errorf("failed to unquote content, err: %v", err)
@@ -128,10 +127,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		e.envoySecretLock.Lock()
 		e.envoySecrets[envoyResource.GetName()] = envoyResource.(*EnvoySecret)
 		e.envoySecretLock.Unlock()
+		// add for test
+		jsonContent, err := json.Marshal(envoyResource.(*EnvoySecret).Secret)
+		if err != nil {
+			klog.Errorf("failed to marshal envoy secret into json content, error: %v", err)
+			return err
+		}
 		daoResource = &dao.Secret{
-			ID:    resKey,
-			Name:  resKey,
-			Value: unquotedContent,
+			ID:        resKey,
+			Name:      resKey,
+			Value:     unquotedContent,
+			JsonValue: string(jsonContent),
 		}
 	case string(ENDPOINT):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyEndpoint)).ClusterLoadAssignment))
@@ -142,10 +148,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		e.envoyEndpointLock.Lock()
 		e.envoyEndpoints[envoyResource.GetName()] = envoyResource.(*EnvoyEndpoint)
 		e.envoyEndpointLock.Unlock()
+		// add for test
+		jsonContent, err := json.Marshal(envoyResource.(*EnvoyEndpoint).ClusterLoadAssignment)
+		if err != nil {
+			klog.Errorf("failed to marshal envoy endpoint into json content, error: %v", err)
+			return err
+		}
 		daoResource = &dao.Endpoint{
-			ID:    resKey,
-			Name:  resKey,
-			Value: unquotedContent,
+			ID:        resKey,
+			Name:      resKey,
+			Value:     unquotedContent,
+			JsonValue: string(jsonContent),
 		}
 	case string(CLUSTER):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyCluster)).Cluster))
@@ -156,10 +169,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		e.envoyClusterLock.Lock()
 		e.envoyClusters[envoyResource.GetName()] = envoyResource.(*EnvoyCluster)
 		e.envoyClusterLock.Unlock()
+		// add for test
+		jsonContent, err := json.Marshal(envoyResource.(*EnvoyCluster).Cluster)
+		if err != nil {
+			klog.Errorf("failed to marshal envoy cluster into json content, error: %v", err)
+			return err
+		}
 		daoResource = &dao.Cluster{
-			ID:    resKey,
-			Name:  resKey,
-			Value: unquotedContent,
+			ID:        resKey,
+			Name:      resKey,
+			Value:     unquotedContent,
+			JsonValue: string(jsonContent),
 		}
 	case string(ROUTE):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyRoute)).RouteConfiguration))
@@ -170,10 +190,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		e.envoyRouteLock.Lock()
 		e.envoyRoutes[envoyResource.GetName()] = envoyResource.(*EnvoyRoute)
 		e.envoyRouteLock.Unlock()
+		// add for test
+		jsonContent, err := json.Marshal(envoyResource.(*EnvoyRoute).RouteConfiguration)
+		if err != nil {
+			klog.Errorf("failed to marshal envoy route into json content, error: %v", err)
+			return err
+		}
 		daoResource = &dao.Router{
-			ID:    resKey,
-			Name:  resKey,
-			Value: unquotedContent,
+			ID:        resKey,
+			Name:      resKey,
+			Value:     unquotedContent,
+			JsonValue: string(jsonContent),
 		}
 	case string(LISTENER):
 		err = proto.Unmarshal(envoyResourceString, &((envoyResource.(*EnvoyListener)).Listener))
@@ -184,10 +211,17 @@ func (e *envoyControlPlane) processInsert(message model.Message) error {
 		e.envoyListenerLock.Lock()
 		e.envoyListeners[envoyResource.GetName()] = envoyResource.(*EnvoyListener)
 		e.envoyListenerLock.Unlock()
+		// add for test
+		jsonContent, err := json.Marshal(envoyResource.(*EnvoyListener).Listener)
+		if err != nil {
+			klog.Errorf("failed to marshal envoy listener into json content, error: %v", err)
+			return err
+		}
 		daoResource = &dao.Listener{
-			ID:    resKey,
-			Name:  resKey,
-			Value: unquotedContent,
+			ID:        resKey,
+			Name:      resKey,
+			Value:     unquotedContent,
+			JsonValue: string(jsonContent),
 		}
 	}
 	err = dao.InsertOrUpdateResource(daoResource)

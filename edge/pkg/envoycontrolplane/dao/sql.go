@@ -37,8 +37,8 @@ func UpdateResource(daoResource DaoResource) error {
 }
 
 func InsertOrUpdateResource(daoResource DaoResource) error {
-	_, err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO "+daoResource.Type()+" (id, name, value) VALUES (?,?,?)",
-		daoResource.GetID(), daoResource.GetName(), daoResource.GetValue()).Exec()
+	_, err := dbm.DBAccess.Raw("INSERT OR REPLACE INTO "+daoResource.Type()+" (id, name, value, jsonvalue) VALUES (?,?,?,?)",
+		daoResource.GetID(), daoResource.GetName(), daoResource.GetValue(), daoResource.GetJsonValue()).Exec()
 	klog.V(4).Infof("update result %v", err)
 	return err
 }
