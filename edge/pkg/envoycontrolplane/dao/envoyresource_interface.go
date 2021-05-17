@@ -6,6 +6,7 @@ type DaoResource interface {
 	GetID() string
 	GetName() string
 	GetValue() string
+	GetJsonValue() string
 }
 
 const (
