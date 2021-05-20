@@ -45,6 +45,7 @@ import (
 )
 
 // TODO: when restarting and disconnect from cloud, read objects from sqlite3
+// TODO: when reconnected to cloud, delete all the local resources
 
 type envoyControlPlane struct {
 	enable            bool

@@ -53,6 +53,9 @@ func (lc *LocationCache) UpdateEdgeNode(node *v1.Node) {
 		status, nodeName string
 		nodeReady        = false
 	)
+	if _, ok := node.Labels[constants.NODEGROUPLABEL]; !ok {
+		return
+	}
 	nodeName = node.ObjectMeta.Name
 	for _, nsc := range node.Status.Conditions {
 		if nsc.Type == "Ready" {
@@ -103,7 +106,18 @@ func (lc *LocationCache) DeleteNodeGroup(node *v1.Node) {
 }
 
 func (lc *LocationCache) UpdateNodeGroup(node *v1.Node) {
-	if node.Labels != nil {
+	// we only concern about ready nodes
+	var (
+		nodeReady = false
+	)
+
+	for _, nsc := range node.Status.Conditions {
+		if nsc.Type == "Ready" {
+			nodeReady = true
+			break
+		}
+	}
+	if nodeReady && node.Labels != nil {
 		if _, ok := node.Labels[constants.NODEGROUPLABEL]; ok {
 			lc.ngLock.Lock()
 			defer lc.ngLock.Unlock()

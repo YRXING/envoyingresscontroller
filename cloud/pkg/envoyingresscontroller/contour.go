@@ -169,9 +169,10 @@ func Secretname(s *v1.Secret) string {
 // continues until the length of s does not exceed l, or all elements have been truncated.
 // In which case, the entire string is replaced with a hash not exceeding the length of l.
 func Hashname(l int, s ...string) string {
+	const SEP = "_"
 	const shorthash = 6 // the length of the shorthash
 
-	r := strings.Join(s, "/")
+	r := strings.Join(s, SEP)
 	if l > len(r) {
 		// we're under the limit, nothing to do
 		return r
@@ -179,7 +180,7 @@ func Hashname(l int, s ...string) string {
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(r)))
 	for n := len(s) - 1; n >= 0; n-- {
 		s[n] = truncate(l/len(s), s[n], hash[:shorthash])
-		r = strings.Join(s, "/")
+		r = strings.Join(s, SEP)
 		if l > len(r) {
 			return r
 		}
