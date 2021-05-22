@@ -795,12 +795,15 @@ func (eic *EnvoyIngressController) deleteSecret(obj interface{}) {
 func (eic *EnvoyIngressController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer eic.queue.ShutDown()
+	defer eic.resourceQueue.ShutDown()
 
 	klog.Infof("Starting envoy ingress controller")
 	defer klog.Infof("Shutting down envoy ingress controller")
 
 	// TODO:when starting controller, first sync nodegroup relationship
 	// then generate envoy resources for all present ingresses
+
+	//TODO: need to find out which ingress version does the k8s cluster supports
 
 	if !cache.WaitForNamedCacheSync("envoy ingress", beehiveContext.Done(), eic.endpointStoreSynced,
 		eic.serviceStoreSynced, eic.nodeStoreSynced, eic.secretStoreSynced) {
@@ -866,6 +869,7 @@ func (eic *EnvoyIngressController) processNextIngressWorkItem() bool {
 func (eic *EnvoyIngressController) runEnvoyResourceDispatchWorkers() {
 	for eic.processNextEnvoyResourceWorkItem() {
 	}
+	klog.Info("exit runEnvoyResourceDispatchWorkers fkdhfkjahfkljdahfkjsdahfjkhawdifh")
 }
 
 // processNextEnvoyResourceWorkItem deals with one key off the queue.  It returns false when it's time to quit.
@@ -874,16 +878,17 @@ func (eic *EnvoyIngressController) processNextEnvoyResourceWorkItem() bool {
 	if quit {
 		return false
 	}
-	defer eic.queue.Done(resourceKey)
+	defer eic.resourceQueue.Done(resourceKey)
 
+	klog.Infof("afkdjafdjlajfdla")
 	err := eic.syncEnvoyResource(resourceKey.(string))
 	if err == nil {
-		eic.queue.Forget(resourceKey)
+		eic.resourceQueue.Forget(resourceKey)
 		return true
 	}
 
 	utilruntime.HandleError(fmt.Errorf("dispatch resource %v failed with: %v", resourceKey, err))
-	eic.queue.AddRateLimited(resourceKey)
+	eic.resourceQueue.AddRateLimited(resourceKey)
 
 	return true
 }
@@ -915,6 +920,7 @@ func (eic *EnvoyIngressController) enqueueEnvoyResource(resource *Resource) {
 	}
 
 	eic.resourceQueue.Add(key)
+	klog.Infof("jfhdakhfiahdfijhaoshdf")
 }
 
 func (eic *EnvoyIngressController) enqueueEnvoyIngressAfter(obj interface{}, after time.Duration) {
@@ -1760,17 +1766,19 @@ func (eic *EnvoyIngressController) syncEnvoyResource(resourceName string) error 
 	var (
 		envoyResource *Resource
 		copyResource  Resource
+		tmpError      error
+		opr           string
 	)
 	startTime := time.Now()
 	defer func() {
-		klog.V(4).Infof("Finished syncing envoy resource  %q (%v)", resourceName, time.Since(startTime))
+		klog.Infof("Finished syncing envoy resource  %q (%v)", resourceName, time.Since(startTime))
 	}()
+	klog.Infof("syncEnvoyResource hoadhfkjasfdadfhkjas")
 	eic.resourceStoreLock.RLock()
 	envoyResource, ok := eic.resourceStore[resourceName]
 	if !ok {
 		return fmt.Errorf("failed to get resource %s in resource store", resourceName)
 	}
-	eic.resourceStoreLock.RUnlock()
 	envoyResource.RWLock.RLock()
 	copyResource = Resource{
 		Name:            envoyResource.Name,
@@ -1780,7 +1788,14 @@ func (eic *EnvoyIngressController) syncEnvoyResource(resourceName string) error 
 		IngressRef:      envoyResource.IngressRef,
 		Spec:            envoyResource.Spec,
 	}
+	if len(envoyResource.IngressRef) != 0 {
+		opr = model.InsertOperation
+	} else {
+		opr = model.DeleteOperation
+		delete(eic.resourceStore, resourceName)
+	}
 	envoyResource.RWLock.RUnlock()
+	eic.resourceStoreLock.RUnlock()
 
 	nodegroup := copyResource.NodeGroup
 	nodesToSend := make(map[string]bool)
@@ -1792,10 +1807,10 @@ func (eic *EnvoyIngressController) syncEnvoyResource(resourceName string) error 
 			nodesToSend[node] = true
 		}
 	}
-	var tmpError error
+
 	for node := range nodesToSend {
 		klog.Infof("dispatch to node, resource: %v, node: %s", copyResource, node)
-		err := eic.dispatchResource(&copyResource, model.InsertOperation, node)
+		err := eic.dispatchResource(&copyResource, opr, node)
 		if err != nil {
 			tmpError = err
 			klog.Warning(err)
@@ -1823,20 +1838,6 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		v1beta1Ingress, err := eic.v1beta1IngressLister.Ingresses(namespace).Get(name)
 		if errors.IsNotFound(err) {
 			klog.V(4).Infof("ingress has been deleted %v", key)
-			eic.ingressNodeGroupStoreLock.Lock()
-			nodegroup := eic.ingressNodeGroupStore[key]
-			delete(eic.ingressNodeGroupStore, key)
-			eic.ingressNodeGroupStoreLock.Unlock()
-			var nodesToSend = make(map[string]bool)
-			for v := range nodegroup {
-				for _, node := range eic.lc.Group2node[v] {
-					if status, ok := eic.lc.GetNodeStatus(node); !ok || status != "True" {
-						continue
-					}
-					nodesToSend[node] = true
-				}
-			}
-			// TODO: need to maintain stores and ingress2store relationship
 			eic.ingressToResourceNameStoreLock.Lock()
 			envoyResources := eic.ingressToResourceNameStore[key]
 			delete(eic.ingressToResourceNameStore, key)
@@ -1847,13 +1848,13 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 				if !ok {
 					continue
 				}
-				delete(eic.resourceStore, envoyResource)
-				eic.resourceStoreLock.Unlock()
 				resource.RWLock.Lock()
-				for node := range nodesToSend {
-					_ = eic.dispatchResource(resource, model.DeleteOperation, node)
+				delete(resource.IngressRef, key)
+				if len(resource.IngressRef) == 0 {
+					eic.enqueueEnvoyResource(resource)
 				}
 				resource.RWLock.Unlock()
+				eic.resourceStoreLock.Unlock()
 			}
 			eic.ingressToResourceNameStoreLock.Lock()
 			delete(eic.ingressToResourceNameStore, key)
@@ -1933,53 +1934,35 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		if !fresh {
 			eic.resourceStoreLock.Lock()
 			envoyResource, ok := eic.resourceStore[resourceKey]
-			eic.resourceStoreLock.Unlock()
 			if !ok {
+				eic.resourceStoreLock.Unlock()
 				continue
 			}
 			// modify the ingress reference
 			shouldBeDeleted := false
-			envoyResource.RWLock.Lock()
+			//envoyResource.RWLock.Lock()
 			if _, ok := envoyResource.IngressRef[key]; ok {
 				delete(envoyResource.IngressRef, key)
 			}
 			if len(envoyResource.IngressRef) == 0 {
 				shouldBeDeleted = true
 			}
-			envoyResource.RWLock.Unlock()
+			//envoyResource.RWLock.Unlock()
 			if !shouldBeDeleted {
+				eic.resourceStoreLock.Unlock()
 				continue
 			}
 			// The resource is outdate. Delete it.
 			// delete it from resourceStore
 			klog.Infof("delete resource %s", resourceKey)
-			eic.resourceStoreLock.Lock()
-			delete(eic.resourceStore, resourceKey)
-			eic.resourceStoreLock.Unlock()
 			eic.ingressToResourceNameStoreLock.Lock()
 			if _, ok := eic.ingressToResourceNameStore[key]; ok {
 				delete(eic.ingressToResourceNameStore[key], resourceKey)
 			}
 			eic.ingressToResourceNameStoreLock.Unlock()
 
-			eic.ingressNodeGroupStoreLock.Lock()
-			nodegroup := eic.ingressNodeGroupStore[key]
-			eic.ingressNodeGroupStoreLock.Unlock()
-			var nodesToSend = make(map[string]bool)
-			for v := range nodegroup {
-				for _, node := range eic.lc.Group2node[v] {
-					if status, ok := eic.lc.GetNodeStatus(node); !ok || status != "True" {
-						continue
-					}
-					nodesToSend[node] = true
-				}
-			}
-
-			envoyResource.RWLock.RLock()
-			for node := range nodesToSend {
-				_ = eic.dispatchResource(envoyResource, model.DeleteOperation, node)
-			}
-			envoyResource.RWLock.RUnlock()
+			eic.enqueueEnvoyResource(envoyResource)
+			eic.resourceStoreLock.Unlock()
 		}
 	}
 
@@ -1996,16 +1979,13 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 	}
 	eic.ingressNodeGroupStoreLock.Unlock()
 
-	//eic.ingressToResourceNameStoreLock.Lock()
-	//eic.ingressToResourceNameStore[key] = make(map[string]bool)
-	//eic.ingressToResourceNameStoreLock.Unlock()
-
 	// insertion
+	eic.resourceStoreLock.Lock()
+	defer eic.resourceStoreLock.Unlock()
 	for _, resource := range envoyResources {
 		if resource == nil {
 			continue
 		}
-		eic.resourceStoreLock.Lock()
 		envoyResourceKey, err := EnvoyResourceKeyFunc(resource)
 		if err != nil {
 			utilruntime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", resource, err))
@@ -2014,6 +1994,7 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 		res, ok := eic.resourceStore[envoyResourceKey]
 		if !ok {
 			// the resource doesn't exist, create it
+			resource.IngressRef[key] = true
 			eic.resourceStore[envoyResourceKey] = resource
 			eic.ingressToResourceNameStore[key][envoyResourceKey] = true
 			eic.enqueueEnvoyResource(resource)
@@ -2033,11 +2014,11 @@ func (eic *EnvoyIngressController) syncEnvoyIngress(key string) error {
 			//}
 			res.RWLock.Lock()
 			res.IngressRef[key] = true
-			eic.resourceStore[envoyResourceKey].Spec = resource.Spec
+			res.Spec = resource.Spec
+			res.ResourceVersion = resource.ResourceVersion
 			eic.enqueueEnvoyResource(res)
 			res.RWLock.Unlock()
 		}
-		eic.resourceStoreLock.Unlock()
 	}
 	return nil
 }
@@ -2191,6 +2172,7 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 			res, ok := eic.resourceStore[envoyResourceKey]
 			if !ok {
 				// the resource doesn't exist, create it
+				resource.IngressRef[key] = true
 				eic.resourceStore[envoyResourceKey] = resource
 				eic.ingressToResourceNameStore[key][envoyResourceKey] = true
 				eic.enqueueEnvoyResource(resource)
@@ -2198,12 +2180,11 @@ func (eic *EnvoyIngressController) initiateEnvoyResources() error {
 				// the resource already exist in resourceStore, compare it
 				if !reflect.DeepEqual(resource.Spec, res.Spec) {
 					// the resource spec has been modified, update it
-					eic.resourceStore[envoyResourceKey].Spec = resource.Spec
+					res.ResourceVersion = resource.ResourceVersion
+					res.Spec = resource.Spec
 					eic.enqueueEnvoyResource(res)
-				} else {
-					//the resource spec is the same as res, update its ingressRef
-					res.IngressRef[key] = true
 				}
+				res.IngressRef[key] = true
 			}
 		}
 		klog.Infof("length of ingressToResourceNameStore %d, key %s", len(eic.ingressToResourceNameStore[key]), key)
