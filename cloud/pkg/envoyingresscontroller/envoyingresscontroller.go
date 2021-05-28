@@ -76,8 +76,6 @@ import (
 	"k8s.io/kubernetes/pkg/controller"
 )
 
-// TODO: The concurrency model looks messy. Reconstruct it.
-
 const (
 	ENVOY_HTTP_LISTENER  = "ingress_http"
 	ENVOY_HTTPS_LISTENER = "ingress_https"
@@ -1286,7 +1284,7 @@ func (eic *EnvoyIngressController) getEndpointsForIngress(ingress *ingressv1.Ing
 				NodeGroup:       nodegroup,
 				IngressRef:      map[string]bool{key: true},
 				Spec: &envoy_endpoint_v3.ClusterLoadAssignment{
-					ClusterName: service.Name,
+					ClusterName: service.Namespace + "-" + service.Name,
 					Endpoints: []*envoy_endpoint_v3.LocalityLbEndpoints{
 						{
 							LbEndpoints: lbs,
@@ -1426,6 +1424,7 @@ func (eic *EnvoyIngressController) getClustersForIngress(ingress *ingressv1.Ingr
 			case 0:
 				// external name not set, cluster will be discovered via EDS
 				cluster.ClusterDiscoveryType = ClusterDiscoveryType(envoy_cluster_v3.Cluster_EDS)
+				// TODO the name has to be consistent
 				cluster.EdsClusterConfig = edsconfig("envoyingresscontroller", service, &servicePort)
 			default:
 				// external name set, use hard coded DNS name
@@ -1601,6 +1600,7 @@ func (eic *EnvoyIngressController) getRouteForIngress(ingress *ingressv1.Ingress
 	if len(virtualHosts) == 0 {
 		return nil, fmt.Errorf("fail to create routeconfiguration virtualhosts for ingress %s in namespace %s", ingress.Name, ingress.Namespace)
 	}
+	// TODO: the name of the route configuration has to be changed
 	routeConfiguration = RouteConfiguration(ENVOY_HTTP_LISTENER, virtualHosts...)
 
 	envoyRoute = &Resource{
@@ -1652,7 +1652,8 @@ func (eic *EnvoyIngressController) getListenersForIngress(ingress *ingressv1.Ing
 		var filters []*envoy_listener_v3.Filter
 		var filterChain *envoy_listener_v3.FilterChain
 		httpCm := &http.HttpConnectionManager{
-			CodecType: http.HttpConnectionManager_AUTO,
+			StatPrefix: "envoyingresscontroller",
+			CodecType:  http.HttpConnectionManager_AUTO,
 			RouteSpecifier: &http.HttpConnectionManager_Rds{
 				Rds: &http.Rds{
 					RouteConfigName: ENVOY_HTTP_LISTENER,
@@ -1697,7 +1698,8 @@ func (eic *EnvoyIngressController) getListenersForIngress(ingress *ingressv1.Ing
 
 		if needTLS {
 			httpCm := &http.HttpConnectionManager{
-				CodecType: http.HttpConnectionManager_AUTO,
+				StatPrefix: "envoyingresscontroller",
+				CodecType:  http.HttpConnectionManager_AUTO,
 				RouteSpecifier: &http.HttpConnectionManager_Rds{
 					Rds: &http.Rds{
 						RouteConfigName: ENVOY_HTTP_LISTENER,
@@ -2042,7 +2044,7 @@ func (eic *EnvoyIngressController) dispatchResource(envoyResource *Resource, opr
 	default:
 		return fmt.Errorf("unknown resource spec type %T", envoyResource.Spec)
 	}
-	resource, err := messagelayer.BuildResource(node, envoyResource.Namespace, resourceType, envoyResource.Name)
+	resource, err := messagelayer.BuildResource(node, envoyResource.Namespace, resourceType, "envoy"+envoyResource.Name)
 	if err != nil {
 		klog.Warningf("built message resource failed with error: %s, node: %s, namespace: %s, resourceType: %s, name: %s", err, node, envoyResource.Namespace, resourceType, envoyResource.Name)
 		return err

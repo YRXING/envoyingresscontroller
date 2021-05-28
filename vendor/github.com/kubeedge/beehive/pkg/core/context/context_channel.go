@@ -146,6 +146,8 @@ func (ctx *ChannelContext) SendSync(module string, message model.Message, timeou
 
 // SendResp send resp for this message when using sync mode
 func (ctx *ChannelContext) SendResp(message model.Message) {
+	klog.Infof("faksdfoahffalks received a message, sync: %v, parent: %v, content: %v",
+		message.Header.Sync, message.GetParentID(), message.GetContent())
 	anonName := getAnonChannelName(message.GetParentID())
 
 	ctx.anonChsLock.RLock()
@@ -155,7 +157,7 @@ func (ctx *ChannelContext) SendResp(message model.Message) {
 		return
 	}
 
-	klog.V(4).Infof("Get bad anonName:%s when sendresp message, do nothing", anonName)
+	klog.Infof("faksdfoahffalks Get bad anonName:%s when sendresp message, do nothing", anonName)
 }
 
 // SendToGroup send msg to modules. Todo: do not stuck
